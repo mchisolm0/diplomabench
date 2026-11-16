@@ -1,6 +1,6 @@
 import type { Agent, Decision, Talk } from "./agents.ts";
 import { adjudicate, initialState, normalizeOrders, phaseName, type Order, type PhaseRecord } from "./engine.ts";
-import { POWERS, type Power } from "./map.ts";
+import { POWERS, type MapId, type Power } from "./map.ts";
 import { canSee, normalizeMessages, type Message } from "./press.ts";
 import { PROMPT_VERSION, type View } from "./prompt.ts";
 
@@ -16,6 +16,8 @@ export type GamePhase = PhaseRecord & {
 
 export type GameLog = {
   promptVersion: string;
+  /** Missing in logs from before maps were data; those are v1. */
+  map: MapId;
   pressRounds: number;
   seats: Record<Power, string>;
   startedAt: string;
@@ -29,12 +31,13 @@ export type GameLog = {
  */
 export async function playGame(
   seats: Record<Power, Agent>,
-  opts: { pressRounds?: number; onPhase?: (log: GameLog) => void | Promise<void> } = {},
+  opts: { map?: MapId; pressRounds?: number; onPhase?: (log: GameLog) => void | Promise<void> } = {},
 ): Promise<GameLog> {
   const pressRounds = opts.pressRounds ?? 0;
-  let state = initialState();
+  let state = initialState(opts.map);
   const log: GameLog = {
     promptVersion: PROMPT_VERSION,
+    map: state.map,
     pressRounds,
     seats: Object.fromEntries(POWERS.map((p) => [p, seats[p].id])) as Record<Power, string>,
     startedAt: new Date().toISOString(),

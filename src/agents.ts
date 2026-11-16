@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { legalOrders, unitsOf } from "./engine.ts";
-import { SYSTEM_PROMPT, buildPrompt, type View } from "./prompt.ts";
+import { MAPS } from "./map.ts";
+import { buildPrompt, systemPrompt, type View } from "./prompt.ts";
 
 /** Call bookkeeping shared by every model response. */
 export type CallMeta = {
@@ -81,11 +82,11 @@ export const CLAUDE_SETTINGS = join(homedir(), ".config/diplomabench/claude-auth
  */
 export function claudeCodeAgent(model: string, opts: { timeoutMs?: number; settings?: string } = {}): Agent {
   const settings = opts.settings ?? CLAUDE_SETTINGS;
-  const call = async <T>(prompt: string, schema: string): Promise<{ output: Partial<T> } & CallMeta> => {
+  const call = async <T>(view: View, prompt: string, schema: string): Promise<{ output: Partial<T> } & CallMeta> => {
     const args = [
       "-p", "--bare", "--settings", settings, "--model", model,
       "--output-format", "json", "--tools", "", "--no-session-persistence",
-      "--system-prompt", SYSTEM_PROMPT, "--json-schema", schema,
+      "--system-prompt", systemPrompt(MAPS[view.state.map]), "--json-schema", schema,
     ];
     const started = Date.now();
     try {
@@ -115,11 +116,11 @@ export function claudeCodeAgent(model: string, opts: { timeoutMs?: number; setti
   return {
     id: `claude-code/${model}`,
     async decide(view) {
-      const { output, ...meta } = await call<{ plan: string; orders: unknown[] }>(buildPrompt(view, { kind: "orders" }), ORDERS_SCHEMA);
+      const { output, ...meta } = await call<{ plan: string; orders: unknown[] }>(view, buildPrompt(view, { kind: "orders" }), ORDERS_SCHEMA);
       return { ...meta, orders: output.orders ?? [], plan: output.plan };
     },
     async talk(view, round, rounds) {
-      const { output, ...meta } = await call<{ messages: unknown[] }>(buildPrompt(view, { kind: "talk", round, rounds }), TALK_SCHEMA);
+      const { output, ...meta } = await call<{ messages: unknown[] }>(view, buildPrompt(view, { kind: "talk", round, rounds }), TALK_SCHEMA);
       return { ...meta, messages: output.messages ?? [] };
     },
   };

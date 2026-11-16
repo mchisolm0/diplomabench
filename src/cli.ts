@@ -1,19 +1,20 @@
 // Usage: node src/cli.ts [--model sonnet | --seats sonnet,opus,random,hold,haiku]
-//                        [--press 2] [--games 10] [--parallel 3] [--out runs]
+//                        [--map v2] [--press 2] [--games 10] [--parallel 3] [--out runs]
 // A seat is "hold", "random", or a Claude model name. --model fills every seat.
 // Mixed lineups rotate one seat per game, so run multiples of 5 for balance.
 import { mkdir, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { CLAUDE_SETTINGS, holdAgent, randomAgent, claudeCodeAgent, type Agent } from "./agents.ts";
-import { centerCount, formatOrder } from "./engine.ts";
+import { centerCount, formatOrder, scores } from "./engine.ts";
 import { playGame, type GameLog } from "./game.ts";
-import { POWERS, PROVINCE_IDS, type Power } from "./map.ts";
+import { MAPS, MAP_IDS, POWERS, type MapId, type Power } from "./map.ts";
 import { readUsage, usageDelta } from "./usage.ts";
 
 const { values } = parseArgs({
   options: {
     model: { type: "string" },
     seats: { type: "string" },
+    map: { type: "string", default: "v1" },
     press: { type: "string", default: "0" },
     games: { type: "string", default: "1" },
     parallel: { type: "string", default: "1" },
@@ -24,6 +25,8 @@ const { values } = parseArgs({
 
 const specs = values.seats?.split(",") ?? POWERS.map(() => values.model ?? "random");
 if (specs.length !== POWERS.length) throw new Error(`--seats needs ${POWERS.length} entries`);
+const map = values.map as MapId;
+if (!MAP_IDS.includes(map)) throw new Error(`--map must be one of ${MAP_IDS.join(", ")}`);
 const games = Number(values.games);
 const pressRounds = Number(values.press);
 const seed = Number(values.seed);
@@ -34,7 +37,7 @@ function agentFor(spec: string, seed: number): Agent {
   return claudeCodeAgent(spec);
 }
 
-const label = `${[...new Set(specs)].join("+")}${pressRounds ? `-press${pressRounds}` : ""}`;
+const label = `${map}-${[...new Set(specs)].join("+")}${pressRounds ? `-press${pressRounds}` : ""}`;
 const dir = `${values.out}/${new Date().toISOString().replace(/[:.]/g, "-")}-${label}`;
 await mkdir(dir, { recursive: true });
 
@@ -51,6 +54,7 @@ async function worker() {
     ) as Record<Power, Agent>;
     const file = `${dir}/game-${String(g + 1).padStart(2, "0")}.json`;
     const log = await playGame(seats, {
+      map,
       pressRounds,
       onPhase: async (log) => {
         if (games === 1) printPhase(log);
@@ -59,7 +63,7 @@ async function worker() {
     });
     logs[g] = log;
     const r = log.final.result;
-    console.log(`game ${g + 1}: ${r?.kind} ${r?.winners.join(", ")} after ${log.phases.length} phases  ${POWERS.map((p) => `${p[0]}${centerCount(log.final, p)}`).join(" ")}`);
+    console.log(`game ${g + 1}: ${r?.kind} ${r?.winners.join(", ") ?? ""} after ${log.phases.length} phases  ${POWERS.map((p) => `${p[0]}${centerCount(log.final, p)}`).join(" ")}`);
   }
 }
 await Promise.all(Array.from({ length: Math.min(Number(values.parallel), games) }, worker));
@@ -86,10 +90,9 @@ function printPhase(log: GameLog) {
   console.log(`${phase.phase}  ${counts}  msgs ${phase.messages.length}  fallbacks ${phase.fallbacks.length}  ${orders.join(", ")}`);
 }
 
-/** Center share is the headline score: final centers over all centers, averaged. */
+/** Score (see `scores`) is the headline; center share and solos explain it. */
 function summarize(logs: GameLog[]) {
-  const total = PROVINCE_IDS.length;
-  const byAgent: Record<string, { seatGames: number; share: number; solos: number; wins: number; draws: number }> = {};
+  const byAgent: Record<string, { seatGames: number; score: number; share: number; solos: number }> = {};
   const bySeat = Object.fromEntries(POWERS.map((p) => [p, 0])) as Record<Power, number>;
   const outcomes: Record<string, number> = {};
   let cost = 0;
@@ -97,18 +100,15 @@ function summarize(logs: GameLog[]) {
   let errors = 0;
   for (const log of logs) {
     const r = log.final.result;
+    const score = scores(log.final);
     outcomes[r?.kind ?? "none"] = (outcomes[r?.kind ?? "none"] ?? 0) + 1;
     for (const p of POWERS) {
-      const centers = centerCount(log.final, p);
-      const a = (byAgent[log.seats[p]] ??= { seatGames: 0, share: 0, solos: 0, wins: 0, draws: 0 });
+      const a = (byAgent[log.seats[p]] ??= { seatGames: 0, score: 0, share: 0, solos: 0 });
       a.seatGames++;
-      a.share += centers / total;
-      if (r?.winners.includes(p)) {
-        if (r.kind === "draw") a.draws++;
-        else a.wins++;
-        if (r.kind === "solo") a.solos++;
-      }
-      bySeat[p] += centers / logs.length;
+      a.score += score[p];
+      a.share += centerCount(log.final, p) / MAPS[map].centers.length;
+      if (r?.kind === "solo" && r.winners.includes(p)) a.solos++;
+      bySeat[p] += score[p] / logs.length;
     }
     for (const phase of log.phases) {
       for (const call of [...Object.values(phase.decisions), ...phase.talks.flatMap((t) => Object.values(t))]) {
@@ -118,15 +118,19 @@ function summarize(logs: GameLog[]) {
       }
     }
   }
-  for (const a of Object.values(byAgent)) a.share = round(a.share / a.seatGames);
+  for (const a of Object.values(byAgent)) {
+    a.score = round(a.score / a.seatGames);
+    a.share = round(a.share / a.seatGames);
+  }
   const sum = (f: (l: GameLog) => number) => logs.reduce((s, l) => s + f(l), 0);
   return {
     games: logs.length,
+    map,
     pressRounds,
     outcomes,
     avgPhases: round(sum((l) => l.phases.length) / logs.length),
     byAgent,
-    avgCentersBySeat: Object.fromEntries(Object.entries(bySeat).map(([p, c]) => [p, round(c)])),
+    avgScoreBySeat: Object.fromEntries(Object.entries(bySeat).map(([p, c]) => [p, round(c)])),
     orderFallbacks: sum((l) => l.phases.reduce((s, p) => s + p.fallbacks.length, 0)),
     messages: sum((l) => l.phases.reduce((s, p) => s + p.messages.length, 0)),
     rejectedMessages: sum((l) => l.phases.reduce((s, p) => s + p.rejectedMessages, 0)),

@@ -1,30 +1,32 @@
 // Fuzzes our adjudicator against the upstream DATC-tested `diplomacy` package.
-// Usage: DIPLOMACY_PYTHON=/path/to/venv/bin/python node scripts/differential.ts [cases] [seed]
+// Usage: DIPLOMACY_PYTHON=/path/to/venv/bin/python node scripts/differential.ts [cases] [seed] [map]
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { adjudicate, formatOrder, legalOrders, type Order, type State } from "../src/engine.ts";
-import { POWERS, PROVINCES, PROVINCE_IDS, type Power, type Province } from "../src/map.ts";
+import { MAPS, MAP_IDS, POWERS, type MapId, type Power, type Province } from "../src/map.ts";
 
 const count = Number(process.argv[2] ?? 2000);
 let seed = Number(process.argv[3] ?? 1) >>> 0;
 const rand = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
 const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)] as T;
+const mapId = (process.argv[4] ?? "v1") as MapId;
+if (!MAP_IDS.includes(mapId)) throw new Error(`map must be one of ${MAP_IDS.join(", ")}`);
+const map = MAPS[mapId];
+const PROVINCE_IDS = map.provinces;
+const homes = POWERS.flatMap((p) => map.homes[p]);
 
-// Every province is a supply center; homes belong to their power, the rest start neutral.
+// Homes belong to their power; other centers start neutral.
 const mapFile = [
   "BEGIN SPRING 1901 MOVEMENT",
   "",
-  ...POWERS.flatMap((p) => {
-    const home = PROVINCE_IDS.find((id) => PROVINCES[id].home === p);
-    return [`${p} (${p}) ${home}`, `A ${home}`, ""];
-  }),
-  `UNOWNED ${PROVINCE_IDS.filter((id) => !PROVINCES[id].home).join(" ")}`,
+  ...POWERS.flatMap((p) => [`${p} (${p}) ${map.homes[p].join(" ")}`, ...map.homes[p].map((h) => `A ${h}`), ""]),
+  `UNOWNED ${map.centers.filter((c) => !homes.includes(c)).join(" ")}`,
   "",
-  ...PROVINCE_IDS.map((id) => `${PROVINCES[id].name} = ${id.toLowerCase()}`),
+  ...PROVINCE_IDS.map((id) => `${map.names[id]} = ${id.toLowerCase()}`),
   "",
-  ...PROVINCE_IDS.map((id) => `LAND ${id} ABUTS ${PROVINCES[id].adjacent.join(" ")}`),
+  ...PROVINCE_IDS.map((id) => `LAND ${id} ABUTS ${(map.adjacent[id] ?? []).join(" ")}`),
   "",
 ].join("\n");
 
@@ -47,7 +49,7 @@ for (let i = 0; i < count; i++) {
   const powers = POWERS.slice(0, 2 + Math.floor(rand() * 4));
   const units: State["units"] = {};
   for (const p of PROVINCE_IDS) if (rand() < 0.6) units[p] = pick(powers);
-  const state: State = { year: 1901, season: "S", units, owners: {}, result: null };
+  const state: State = { map: mapId, year: 1901, season: "S", units, owners: {}, result: null };
   const orders = PROVINCE_IDS.filter((p) => units[p]).map((p) => {
     const legal = legalOrders(state, p);
     // Lean toward moves and move supports, where the interesting conflicts are.

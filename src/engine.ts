@@ -1,15 +1,4 @@
-import {
-  FIRST_YEAR,
-  HOME,
-  LAST_YEAR,
-  POWERS,
-  PROVINCES,
-  PROVINCE_IDS,
-  SOLO_CENTERS,
-  isAdjacent,
-  type Power,
-  type Province,
-} from "./map.ts";
+import { FIRST_YEAR, MAPS, POWERS, distance, isAdjacent, type MapId, type Power, type Province } from "./map.ts";
 
 export type Order =
   | { unit: Province; action: "hold" }
@@ -20,17 +9,19 @@ export type Order =
 export type Season = "S" | "F";
 type Board = Partial<Record<Province, Power>>;
 
+/** A solo has one winner. Logs before prompt v3 also hold "center_win" and "draw" at the turn limit. */
 export type GameResult = {
-  kind: "solo" | "center_win" | "draw";
+  kind: "solo" | "limit";
   winners: Power[];
 };
 
 export type State = {
+  map: MapId;
   year: number;
   season: Season;
   /** Which power's army stands in each occupied province. */
   units: Board;
-  /** Supply center owners. Every province is a center. */
+  /** Supply center owners. */
   owners: Board;
   result: GameResult | null;
 };
@@ -45,24 +36,37 @@ export type PhaseRecord = {
   moved: Province[];
   dislodged: { unit: Province; power: Power }[];
   builds: { power: Power; unit: Province }[];
+  disbands: { power: Power; unit: Province }[];
   /** True when two different resolutions tied for most successful moves. Should never happen. */
   ambiguous: boolean;
 };
 
 export const phaseName = (s: Pick<State, "season" | "year">) => `${s.season}${s.year}`;
 
-export function initialState(): State {
+export function initialState(map: MapId = "v1"): State {
   const units: Board = {};
-  for (const power of POWERS) units[HOME[power]] = power;
-  return { year: FIRST_YEAR, season: "S", units, owners: { ...units }, result: null };
+  for (const power of POWERS) for (const home of MAPS[map].homes[power]) units[home] = power;
+  return { map, year: FIRST_YEAR, season: "S", units, owners: { ...units }, result: null };
 }
 
 export function unitsOf(state: State, power: Power): Province[] {
-  return PROVINCE_IDS.filter((p) => state.units[p] === power);
+  return MAPS[state.map].provinces.filter((p) => state.units[p] === power);
 }
 
 export function centerCount(state: State, power: Power): number {
-  return PROVINCE_IDS.filter((p) => state.owners[p] === power).length;
+  return Object.values(state.owners).filter((o) => o === power).length;
+}
+
+/**
+ * The benchmark score. A solo scores 1 for the winner and 0 for everyone
+ * else; otherwise each power scores its share of all supply centers.
+ */
+export function scores(state: State): Record<Power, number> {
+  const solo = state.result?.kind === "solo" ? state.result.winners[0] : undefined;
+  const total = MAPS[state.map].centers.length;
+  return Object.fromEntries(
+    POWERS.map((p) => [p, solo ? Number(p === solo) : centerCount(state, p) / total]),
+  ) as Record<Power, number>;
 }
 
 /** Compact notation used in prompts and logs: `ALP H`, `ALP - ABY`, `ABY S ALP`, `ABY S ALP - EAL`. */
@@ -80,15 +84,17 @@ export function formatOrder(o: Order): string {
 }
 
 export function legalOrders(state: State, unit: Province): Order[] {
+  const map = MAPS[state.map];
   const orders: Order[] = [{ unit, action: "hold" }];
-  const others = PROVINCE_IDS.filter((p) => p !== unit && state.units[p]);
-  for (const to of PROVINCES[unit].adjacent) orders.push({ unit, action: "move", to });
+  const others = map.provinces.filter((p) => p !== unit && state.units[p]);
+  const adjacent = map.adjacent[unit] ?? [];
+  for (const to of adjacent) orders.push({ unit, action: "move", to });
   for (const target of others) {
-    if (isAdjacent(unit, target)) orders.push({ unit, action: "support_hold", target });
+    if (isAdjacent(map, unit, target)) orders.push({ unit, action: "support_hold", target });
   }
-  for (const to of PROVINCES[unit].adjacent) {
+  for (const to of adjacent) {
     for (const target of others) {
-      if (target !== to && isAdjacent(target, to)) {
+      if (target !== to && isAdjacent(map, target, to)) {
         orders.push({ unit, action: "support_move", target, to });
       }
     }
@@ -109,7 +115,7 @@ export function normalizeOrders(
   const chosen = new Map<Province, Order>();
   for (const given of submitted) {
     const text = typeof given === "string" ? given : isOrderLike(given) ? formatOrder(given) : null;
-    const unit = text?.trim().split(/\s+/)[0]?.toUpperCase() as Province | undefined;
+    const unit = text?.trim().split(/\s+/)[0]?.toUpperCase();
     if (!text || !unit || state.units[unit] !== power) {
       fallbacks.push({ power, reason: "not_your_unit", given });
       continue;
@@ -140,13 +146,14 @@ export function adjudicate(
   state: State,
   ordersByPower: Partial<Record<Power, Order[]>>,
 ): { state: State; record: Omit<PhaseRecord, "fallbacks"> } {
+  const provinces = MAPS[state.map].provinces;
   const orders = new Map<Province, Order>();
   for (const power of POWERS) {
     for (const o of ordersByPower[power] ?? []) {
       if (state.units[o.unit] === power) orders.set(o.unit, o);
     }
   }
-  for (const p of PROVINCE_IDS) {
+  for (const p of provinces) {
     if (state.units[p] && !orders.has(p)) orders.set(p, { unit: p, action: "hold" });
   }
 
@@ -154,7 +161,7 @@ export function adjudicate(
   const units: Board = {};
   const dislodged: PhaseRecord["dislodged"] = [];
   const arriving = new Set([...moved].map((p) => target(orders, p)));
-  for (const p of PROVINCE_IDS) {
+  for (const p of provinces) {
     const power = state.units[p];
     if (!power) continue;
     if (moved.has(p)) units[target(orders, p)] = power;
@@ -164,8 +171,9 @@ export function adjudicate(
 
   let next: State = { ...state, units, owners: { ...state.owners } };
   let builds: PhaseRecord["builds"] = [];
+  let disbands: PhaseRecord["disbands"] = [];
   if (state.season === "F") {
-    ({ state: next, builds } = adjust(next));
+    ({ state: next, builds, disbands } = adjust(next));
     next.result = gameResult(next);
     if (!next.result) next = { ...next, year: next.year + 1, season: "S" };
   } else {
@@ -180,6 +188,7 @@ export function adjudicate(
       moved: [...moved],
       dislodged,
       builds,
+      disbands,
       ambiguous,
     },
   };
@@ -275,32 +284,47 @@ function resolve(units: Board, orders: Map<Province, Order>) {
 }
 
 /**
- * Fall bookkeeping: occupiers take centers, then each power may build in its
- * home if it owns it, it is empty, and the power has more centers than units.
- * Every province is a center, so a power never has more units than centers
- * and v1 needs no disbands.
+ * Fall bookkeeping: occupiers take centers, then each power's unit count moves
+ * toward its center count. Builds go in empty owned centers the map allows
+ * (home only, or any owned center), home first, then nearest home. Disbands
+ * take the units farthest from home. Ties go by province order.
  */
 function adjust(state: State) {
-  const owners: Board = { ...state.owners, ...state.units };
+  const map = MAPS[state.map];
+  const owners: Board = { ...state.owners };
+  for (const c of map.centers) {
+    const occupier = state.units[c];
+    if (occupier) owners[c] = occupier;
+  }
   const units: Board = { ...state.units };
   const counted = { ...state, owners, units };
   const builds: PhaseRecord["builds"] = [];
+  const disbands: PhaseRecord["disbands"] = [];
   for (const power of POWERS) {
-    const home = HOME[power];
-    if (unitsOf(counted, power).length < centerCount(counted, power) && owners[home] === power && !units[home]) {
-      units[home] = power;
-      builds.push({ power, unit: home });
+    const home = map.homes[power];
+    const fromHome = (p: Province) => distance(map, p, home);
+    const mine = unitsOf(counted, power);
+    const owed = centerCount(counted, power) - mine.length;
+    if (owed > 0) {
+      const sites = map.centers
+        .filter((c) => owners[c] === power && !units[c] && (map.builds === "owned" || home.includes(c)))
+        .sort((a, b) => fromHome(a) - fromHome(b));
+      for (const unit of sites.slice(0, owed)) {
+        units[unit] = power;
+        builds.push({ power, unit });
+      }
+    }
+    for (const unit of mine.sort((a, b) => fromHome(b) - fromHome(a)).slice(0, Math.max(0, -owed))) {
+      delete units[unit];
+      disbands.push({ power, unit });
     }
   }
-  return { state: counted, builds };
+  return { state: counted, builds, disbands };
 }
 
 function gameResult(state: State): GameResult | null {
-  const counts = POWERS.map((power) => ({ power, centers: centerCount(state, power) }));
-  const solo = counts.find((c) => c.centers >= SOLO_CENTERS);
-  if (solo) return { kind: "solo", winners: [solo.power] };
-  if (state.year < LAST_YEAR) return null;
-  const top = Math.max(...counts.map((c) => c.centers));
-  const winners = counts.filter((c) => c.centers === top).map((c) => c.power);
-  return { kind: winners.length === 1 ? "center_win" : "draw", winners };
+  const map = MAPS[state.map];
+  const solo = POWERS.find((power) => centerCount(state, power) >= map.soloCenters);
+  if (solo) return { kind: "solo", winners: [solo] };
+  return state.year < map.lastYear ? null : { kind: "limit", winners: [] };
 }
