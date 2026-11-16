@@ -100,6 +100,18 @@ describe("movement", () => {
     expect(play(help, { ALPHA: ["ABY - MID"], BETA: ["BGR S ABY - MID"] }).state.units.MID).toBe("BETA");
   });
 
+  // DATC 5.B.7: support for an attack on your own unit can't help dislodge you,
+  // but it still counts as defend strength. Upstream `diplomacy` gets this wrong.
+  test("own support for an attack on you still defends in a head-to-head", () => {
+    const s = board({ ABY: "ALPHA", BET: "ALPHA", EAL: "ALPHA", BGR: "DELTA", MID: "GAMMA" });
+    const { state } = play(s, {
+      ALPHA: ["ABY - MID", "BET S MID - ABY", "EAL S MID - ABY"],
+      DELTA: ["BGR S ABY - MID"],
+      GAMMA: ["MID - ABY"],
+    });
+    expect(state.units).toEqual(s.units);
+  });
+
   test("a unit may follow its own unit out of a province", () => {
     const s = board({ ABY: "ALPHA", MID: "ALPHA" });
     expect(play(s, { ALPHA: ["ABY - MID", "MID - GDE"] }).state.units).toEqual({ MID: "ALPHA", GDE: "ALPHA" });

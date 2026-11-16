@@ -5,7 +5,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "game": "node src/cli.ts"
+    "game": "node src/cli.ts",
+    "oracle": "node scripts/differential.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
