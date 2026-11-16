@@ -72,13 +72,15 @@ const TALK_SCHEMA = JSON.stringify({
   additionalProperties: false,
 });
 
+export const CLAUDE_SETTINGS = join(homedir(), ".config/diplomabench/claude-auth.json");
+
 /**
  * Plays through a headless Claude Code call with no tools. `--bare` keeps the
  * user's CLAUDE.md, hooks, and memory out of the player's context; auth comes
  * from a settings file holding only `apiKeyHelper` and `env`.
  */
 export function claudeCodeAgent(model: string, opts: { timeoutMs?: number; settings?: string } = {}): Agent {
-  const settings = opts.settings ?? join(homedir(), ".config/diplomabench/claude-auth.json");
+  const settings = opts.settings ?? CLAUDE_SETTINGS;
   const call = async <T>(prompt: string, schema: string): Promise<{ output: Partial<T> } & CallMeta> => {
     const args = [
       "-p", "--bare", "--settings", settings, "--model", model,

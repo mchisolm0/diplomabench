@@ -4,10 +4,11 @@
 // Mixed lineups rotate one seat per game, so run multiples of 5 for balance.
 import { mkdir, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { holdAgent, randomAgent, claudeCodeAgent, type Agent } from "./agents.ts";
+import { CLAUDE_SETTINGS, holdAgent, randomAgent, claudeCodeAgent, type Agent } from "./agents.ts";
 import { centerCount, formatOrder } from "./engine.ts";
 import { playGame, type GameLog } from "./game.ts";
 import { POWERS, PROVINCE_IDS, type Power } from "./map.ts";
+import { readUsage, usageDelta } from "./usage.ts";
 
 const { values } = parseArgs({
   options: {
@@ -37,6 +38,10 @@ const label = `${[...new Set(specs)].join("+")}${pressRounds ? `-press${pressRou
 const dir = `${values.out}/${new Date().toISOString().replace(/[:.]/g, "-")}-${label}`;
 await mkdir(dir, { recursive: true });
 
+// Subscription usage is only meaningful when Claude seats play.
+const usesClaude = specs.some((s) => s !== "hold" && s !== "random");
+const usageBefore = usesClaude ? await readUsage(CLAUDE_SETTINGS) : null;
+
 const logs: GameLog[] = [];
 let next = 0;
 async function worker() {
@@ -59,7 +64,15 @@ async function worker() {
 }
 await Promise.all(Array.from({ length: Math.min(Number(values.parallel), games) }, worker));
 
-const summary = summarize(logs);
+const usageAfter = usesClaude ? await readUsage(CLAUDE_SETTINGS) : null;
+const summary = {
+  ...summarize(logs),
+  // Points of each subscription window used, measured before and after the batch.
+  // Anything else on the same login during the batch counts too.
+  subscription: usageBefore && usageAfter
+    ? { deltaPoints: usageDelta(usageBefore, usageAfter), before: usageBefore, after: usageAfter }
+    : null,
+};
 await writeFile(`${dir}/summary.json`, JSON.stringify(summary, null, 2));
 console.log(JSON.stringify(summary, null, 2));
 console.log(`logs: ${dir}`);
@@ -119,7 +132,8 @@ function summarize(logs: GameLog[]) {
     rejectedMessages: sum((l) => l.phases.reduce((s, p) => s + p.rejectedMessages, 0)),
     calls,
     callErrors: errors,
-    costUsd: round(cost),
+    /** Claude Code's list-price estimate; on a subscription this is not a charge. */
+    listPriceUsd: round(cost),
   };
 }
 
