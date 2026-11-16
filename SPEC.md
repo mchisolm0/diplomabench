@@ -51,9 +51,10 @@ Defined in `src/map.ts`. Five homes on a ring (`ALP BET GAM DEL EPS`), a neutral
 ## Benchmark
 
 - **No-press** (default): agents see public state, their power, fixed instructions, and their legal orders. No messages.
-- **Free-press** (later): a fixed number of message rounds before each movement phase. Messages never change state; they are logged and shown to the order prompt.
+- **Press** (`--press N`): N message rounds before each movement phase. Every surviving power acts at once in each round. Up to 3 messages per turn, 600 characters each, to named powers or `ALL`. Players see messages they sent or received from the last 4 phases. Messages never change state.
 - The harness owns state, legal orders, prompts, model calls, parsing, fallback, logging, and scoring. Prompt version, temperature, max tokens, timeout, and retries are fixed per run and recorded.
-- Same-model runs give every power one model. Mixed-model runs rotate models through all five seats across replicates.
+- Same-model runs give every power one model. Mixed lineups rotate one seat per game, so batches of 5 games give each model every seat.
+- Headline score is center share: final centers / 11, averaged per model.
 
 ## Players
 
