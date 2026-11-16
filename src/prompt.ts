@@ -1,27 +1,41 @@
 import { centerCount, formatOrder, legalOrders, unitsOf, type PhaseRecord, type State } from "./engine.ts";
 import { HOME, LAST_YEAR, POWERS, PROVINCES, PROVINCE_IDS, SOLO_CENTERS, type Power } from "./map.ts";
+import { MAX_MESSAGES_PER_TURN, MAX_MESSAGE_CHARS, type Message } from "./press.ts";
 
-/** Bump whenever the text below changes, so runs stay comparable. */
-export const PROMPT_VERSION = "no_press_v1";
+/** Bump whenever prompt text changes, so runs stay comparable. */
+export const PROMPT_VERSION = "v2";
 
-export const SYSTEM_PROMPT = `You are playing Diplomabench, a five-player, armies-only variant of Diplomacy with no negotiation. You control one power and want to finish with the most supply centers.
+/** What a player sees when asked to act. `messages` holds only ones it sent or received. */
+export type View = {
+  power: Power;
+  state: State;
+  history: PhaseRecord[];
+  messages: Message[];
+  press: boolean;
+};
+
+export type Task = { kind: "orders" } | { kind: "talk"; round: number; rounds: number };
+
+export const SYSTEM_PROMPT = `You are playing Diplomabench, a five-player, armies-only variant of Diplomacy. You control one power and want to finish with the most supply centers.
 
 Rules:
 - Each year has Spring and Fall. Every unit gets one order per phase and all orders resolve at once.
-- Orders: "X H" holds. "X - Y" moves to adjacent Y. "X S Z" supports the unit in Z to hold (Z must not be moving). "X S Z - Y" supports the unit in Z moving to Y. A supporter must be adjacent to the province it supports into.
+- Orders: "X H" holds. "X - Y" moves to adjacent Y. "X S Z" supports the unit in Z to hold (Z must not be moving). "X S Z - Y" supports the unit in Z moving to Y. A supporter must be adjacent to the province it supports into. You may support any power's units.
 - Each unit has strength 1, plus 1 per valid support. A move succeeds only if it is strictly stronger than the defender and than every other move into the same province. Ties bounce.
 - Support is cut if a unit of another power attacks the supporter, unless that attack comes from the province the support is aimed at; then it must dislodge the supporter.
 - Two units moving into each other do not swap. A dislodged unit is destroyed. You cannot dislodge your own units.
 - Every province is a supply center. After each Fall, you own every province your units occupy. Owned centers stay yours until another power occupies them after a Fall.
 - After Fall, if you have more centers than units, you build one army in your home, if you own it and it is empty.
-- Owning ${SOLO_CENTERS} or more centers after a Fall wins outright. Otherwise the game ends after Fall ${LAST_YEAR}; the single power with the most centers wins, and a tie for most is a draw.
+- Owning ${SOLO_CENTERS} or more centers after a Fall wins outright. Otherwise the game ends after Fall ${LAST_YEAR} and powers are ranked by centers.
+- When negotiation is on, powers exchange messages before each movement phase. Messages are private to their recipients unless broadcast. Nothing said is binding, and orders are secret until they resolve.
 
-Reply with JSON only: {"plan": "<one or two sentences>", "orders": ["<order>", ...]} with exactly one order per unit, copied from your legal orders.`;
+Reply with JSON only, in the shape the task asks for.`;
 
-export function buildPrompt(power: Power, state: State, history: PhaseRecord[]): string {
+export function buildPrompt(view: View, task: Task): string {
+  const { power, state, history, messages } = view;
   const season = state.season === "S" ? "Spring" : "Fall";
   const lines = [
-    `You are ${power}. Your home is ${HOME[power]}. Phase: ${season} ${state.year}.`,
+    `You are ${power}. Your home is ${HOME[power]}. Phase: ${season} ${state.year}. Negotiation is ${view.press ? "on" : "off"}.`,
     "",
     "Map (province: neighbors):",
     ...PROVINCE_IDS.map((p) => {
@@ -38,11 +52,24 @@ export function buildPrompt(power: Power, state: State, history: PhaseRecord[]):
     "",
     "History:",
     ...(history.length ? history.map(describePhase) : ["(first phase)"]),
-    "",
-    "Your legal orders:",
-    ...unitsOf(state, power).map((u) => `${u}: ${legalOrders(state, u).map(formatOrder).join(" | ")}`),
   ];
+  if (view.press) {
+    lines.push("", "Your messages (oldest first):", ...(messages.length ? messages.map((m) => describeMessage(power, m)) : ["(none yet)"]));
+  }
+  lines.push("", "Your units and their legal orders:", ...unitsOf(state, power).map((u) => `${u}: ${legalOrders(state, u).map(formatOrder).join(" | ")}`));
+  lines.push("", task.kind === "orders" ? ORDERS_TASK : talkTask(task.round, task.rounds));
   return lines.join("\n");
+}
+
+const ORDERS_TASK = `Task: submit orders. Reply {"plan": "<one or two sentences>", "orders": ["<order>", ...]} with exactly one order per unit, copied from your legal orders.`;
+
+const talkTask = (round: number, rounds: number) =>
+  `Task: negotiation round ${round} of ${rounds} before this phase's orders. Reply {"messages": [{"to": ["BETA"], "text": "..."}]}. "to" lists powers, or ["ALL"] to broadcast. Send at most ${MAX_MESSAGES_PER_TURN} messages of at most ${MAX_MESSAGE_CHARS} characters each, or [] to stay silent.`;
+
+function describeMessage(power: Power, m: Message): string {
+  const from = m.from === power ? "you" : m.from;
+  const to = m.broadcast ? "ALL" : m.to.map((p) => (p === power ? "you" : p)).join(", ");
+  return `${m.phase} r${m.round} ${from} -> ${to}: ${m.text}`;
 }
 
 function describePhase(r: PhaseRecord): string {

@@ -1,29 +1,36 @@
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { legalOrders, unitsOf, type PhaseRecord, type State } from "./engine.ts";
-import type { Power } from "./map.ts";
-import { SYSTEM_PROMPT, buildPrompt } from "./prompt.ts";
+import { legalOrders, unitsOf } from "./engine.ts";
+import { SYSTEM_PROMPT, buildPrompt, type View } from "./prompt.ts";
 
-export type Decision = {
-  /** Raw orders as returned; the engine validates them. */
-  orders: unknown[];
-  plan?: string;
+/** Call bookkeeping shared by every model response. */
+export type CallMeta = {
   error?: string;
+  model?: string;
   costUsd?: number;
   durationMs?: number;
   inputTokens?: number;
   outputTokens?: number;
 };
 
+/** Raw orders as returned; the engine validates them. */
+export type Decision = CallMeta & { orders: unknown[]; plan?: string };
+/** Raw messages as returned; `normalizeMessages` validates them. */
+export type Talk = CallMeta & { messages: unknown[] };
+
 export type Agent = {
   id: string;
-  decide(power: Power, state: State, history: PhaseRecord[]): Promise<Decision>;
+  decide(view: View): Promise<Decision>;
+  talk(view: View, round: number, rounds: number): Promise<Talk>;
 };
+
+const silent = async (): Promise<Talk> => ({ messages: [] });
 
 export const holdAgent: Agent = {
   id: "baseline/hold",
-  decide: async (power, state) => ({ orders: unitsOf(state, power).map((u) => `${u} H`) }),
+  decide: async ({ power, state }) => ({ orders: unitsOf(state, power).map((u) => `${u} H`) }),
+  talk: silent,
 };
 
 export function randomAgent(seed: number): Agent {
@@ -31,12 +38,13 @@ export function randomAgent(seed: number): Agent {
   const rand = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32);
   return {
     id: "baseline/random",
-    decide: async (power, state) => ({
+    decide: async ({ power, state }) => ({
       orders: unitsOf(state, power).map((u) => {
         const legal = legalOrders(state, u);
         return legal[Math.floor(rand() * legal.length)];
       }),
     }),
+    talk: silent,
   };
 }
 
@@ -47,6 +55,23 @@ const ORDERS_SCHEMA = JSON.stringify({
   additionalProperties: false,
 });
 
+const TALK_SCHEMA = JSON.stringify({
+  type: "object",
+  properties: {
+    messages: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { to: { type: "array", items: { type: "string" } }, text: { type: "string" } },
+        required: ["to", "text"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["messages"],
+  additionalProperties: false,
+});
+
 /**
  * Plays through a headless Claude Code call with no tools. `--bare` keeps the
  * user's CLAUDE.md, hooks, and memory out of the player's context; auth comes
@@ -54,37 +79,46 @@ const ORDERS_SCHEMA = JSON.stringify({
  */
 export function claudeCodeAgent(model: string, opts: { timeoutMs?: number; settings?: string } = {}): Agent {
   const settings = opts.settings ?? join(homedir(), ".config/diplomabench/claude-auth.json");
-  const args = [
-    "-p", "--bare", "--settings", settings, "--model", model,
-    "--output-format", "json", "--tools", "", "--no-session-persistence",
-    "--system-prompt", SYSTEM_PROMPT, "--json-schema", ORDERS_SCHEMA,
-  ];
+  const call = async <T>(prompt: string, schema: string): Promise<{ output: Partial<T> } & CallMeta> => {
+    const args = [
+      "-p", "--bare", "--settings", settings, "--model", model,
+      "--output-format", "json", "--tools", "", "--no-session-persistence",
+      "--system-prompt", SYSTEM_PROMPT, "--json-schema", schema,
+    ];
+    const started = Date.now();
+    try {
+      const out = JSON.parse(await run("claude", args, prompt, opts.timeoutMs ?? 300_000)) as {
+        is_error?: boolean;
+        result?: string;
+        structured_output?: Partial<T>;
+        total_cost_usd?: number;
+        modelUsage?: Record<string, unknown>;
+        usage?: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; output_tokens?: number };
+      };
+      const usage = out.usage ?? {};
+      return {
+        output: out.structured_output ?? {},
+        error: out.is_error ? out.result : out.structured_output ? undefined : "no structured output",
+        model: Object.keys(out.modelUsage ?? {})[0],
+        costUsd: out.total_cost_usd,
+        durationMs: Date.now() - started,
+        inputTokens: (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0),
+        outputTokens: usage.output_tokens,
+      };
+    } catch (e) {
+      return { output: {}, error: e instanceof Error ? e.message : String(e), durationMs: Date.now() - started };
+    }
+  };
+
   return {
     id: `claude-code/${model}`,
-    async decide(power, state, history) {
-      const started = Date.now();
-      try {
-        const stdout = await run("claude", args, buildPrompt(power, state, history), opts.timeoutMs ?? 300_000);
-        const out = JSON.parse(stdout) as {
-          is_error?: boolean;
-          result?: string;
-          structured_output?: { plan?: string; orders?: unknown[] };
-          total_cost_usd?: number;
-          usage?: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; output_tokens?: number };
-        };
-        const usage = out.usage ?? {};
-        return {
-          orders: out.structured_output?.orders ?? [],
-          plan: out.structured_output?.plan,
-          error: out.is_error ? out.result : out.structured_output ? undefined : "no structured output",
-          costUsd: out.total_cost_usd,
-          durationMs: Date.now() - started,
-          inputTokens: (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0),
-          outputTokens: usage.output_tokens,
-        };
-      } catch (e) {
-        return { orders: [], error: e instanceof Error ? e.message : String(e), durationMs: Date.now() - started };
-      }
+    async decide(view) {
+      const { output, ...meta } = await call<{ plan: string; orders: unknown[] }>(buildPrompt(view, { kind: "orders" }), ORDERS_SCHEMA);
+      return { ...meta, orders: output.orders ?? [], plan: output.plan };
+    },
+    async talk(view, round, rounds) {
+      const { output, ...meta } = await call<{ messages: unknown[] }>(buildPrompt(view, { kind: "talk", round, rounds }), TALK_SCHEMA);
+      return { ...meta, messages: output.messages ?? [] };
     },
   };
 }
