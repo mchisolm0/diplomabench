@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { POWERS, PROVINCES, type Province } from "./map";
+import { POWERS, PROVINCES, type Province } from "./map.ts";
 
 const ids = Object.keys(PROVINCES) as Province[];
 
