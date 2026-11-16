@@ -1,6 +1,6 @@
 # Mini Diplomacy v1
 
-A five-player, armies-only Diplomacy variant that is small enough for humans to play and for LLM agents to be benchmarked against each other. Ported from the legacy spec (see `LEGACY.md`); the rules and map are unchanged.
+A five-player, armies-only Diplomacy variant that is small enough for humans to play and for LLM agents to be benchmarked against each other. Ported from the legacy spec (see `LEGACY.md`) with one rule change: Hold support follows standard Diplomacy.
 
 ## Goals
 
@@ -17,7 +17,7 @@ Defined in `src/map.ts`. Five homes on a ring (`ALP BET GAM DEL EPS`), a neutral
 - Each year has Spring and Fall movement phases, starting in 1901 (`S1901M`, `F1901M`, ...).
 - Every power submits one order per unit. Orders resolve simultaneously.
 - Center ownership updates after Fall movement.
-- Adjustment after Fall: a power with more units than centers loses units; one with fewer builds in its home if it owns it and it is vacant.
+- Adjustment after Fall: a power with more centers than units builds in its home if it owns it and it is vacant. Every province is a center and each unit owns where it stands, so a power never has more units than centers and there are no disbands.
 - No fleets, coasts, convoys, or retreats. A dislodged unit is removed.
 
 ## Orders
@@ -38,7 +38,7 @@ Defined in `src/map.ts`. Five homes on a ring (`ALP BET GAM DEL EPS`), a neutral
 - Support is cut by any enemy attack on the supporter, except an attack from the province the support is directed into, which cuts only by dislodging. A dislodged supporter gives no support.
 - A move must be the unique strongest attack into its destination, and strictly stronger than the defender's strength when the defender does not leave.
 - A unit that successfully moves does not defend its origin, so chains and rings of three or more units succeed.
-- A failed move leaves the unit in place with strength 1. Only units ordered to Hold receive Hold support.
+- A failed move leaves the unit in place with strength 1. Hold support applies to any unit not ordered to move (Hold or Support).
 - Head-to-head moves do not swap. The stronger attack dislodges; equal attacks bounce.
 - A power cannot dislodge its own unit, and support from the defender's own power does not count toward dislodging it.
 
@@ -54,6 +54,11 @@ Defined in `src/map.ts`. Five homes on a ring (`ALP BET GAM DEL EPS`), a neutral
 - **Free-press** (later): a fixed number of message rounds before each movement phase. Messages never change state; they are logged and shown to the order prompt.
 - The harness owns state, legal orders, prompts, model calls, parsing, fallback, logging, and scoring. Prompt version, temperature, max tokens, timeout, and retries are fixed per run and recorded.
 - Same-model runs give every power one model. Mixed-model runs rotate models through all five seats across replicates.
+
+## Players
+
+- `claude-code/<model>`: a headless `claude -p --bare` call with no tools and a JSON schema for `{plan, orders}`. OpenRouter comes later.
+- `baseline/hold` and `baseline/random` for offline runs and tests.
 
 ## Human play
 
