@@ -6,7 +6,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "game": "node src/cli.ts",
-    "oracle": "node scripts/differential.ts"
+    "oracle": "node scripts/differential.ts",
+    "analyze": "node scripts/analyze.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
