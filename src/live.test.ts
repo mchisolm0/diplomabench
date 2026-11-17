@@ -108,10 +108,13 @@ test("a turn that outlives its phase cannot submit into or end the next phase", 
   const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   let turn = 0;
   let late = "";
+  let lateHttp = 0;
   const stubborn = script(async (t) => {
     if (++turn === 1) {
       await pause(800); // ignores the abort at 500ms; the next phase starts about 50ms later
       late = await t.call("submit_orders", { orders: ["ALP - ABY"] });
+      const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "submit_orders", arguments: { orders: ["ALP - ABY"] } } });
+      lateHttp = (await fetch(t.mcp.url, { method: "POST", headers: { authorization: `Bearer ${t.mcp.token}` }, body })).status;
       return;
     }
     await pause(400); // still working when the stale turn above finishes
@@ -124,6 +127,7 @@ test("a turn that outlives its phase cannot submit into or end the next phase", 
     maxPhases: 2,
   });
   expect(late).toContain("This phase is over");
+  expect(lateHttp).toBe(401);
   expect(log.phases[1]?.orders.ALPHA).toEqual([{ unit: "ALP", action: "move", to: "EAL" }]);
 });
 

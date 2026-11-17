@@ -190,7 +190,8 @@ type Run = { stdout: string; stderr: string; code: number | null; aborted: boole
 const meta = (run: Run, error?: string): TurnMeta => ({
   transcript: run.stdout,
   durationMs: run.durationMs,
-  error: error ?? (run.aborted ? "stopped at the phase deadline" : run.code === 0 ? undefined : `exited ${run.code}: ${(run.stderr || run.stdout).slice(-500)}`),
+  // A stopped harness often reports its own death (e.g. OpenCode's ECONNRESET); the stop is what happened.
+  error: run.aborted ? "stopped at the phase deadline" : error ?? (run.code === 0 ? undefined : `exited ${run.code}: ${(run.stderr || run.stdout).slice(-500)}`),
 });
 
 function exec(cmd: string, args: string[], opts: { cwd: string; input: string; signal: AbortSignal; env?: Record<string, string> }): Promise<Run> {

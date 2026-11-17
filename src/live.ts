@@ -98,7 +98,6 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
   const delivered: Message[] = [];
   const cursor = Object.fromEntries(POWERS.map((p) => [p, 0])) as Record<Power, number>;
   const notes = Object.fromEntries(POWERS.map((p) => [p, ""])) as Record<Power, string>;
-  const tokens = Object.fromEntries(POWERS.map((p) => [p, randomBytes(16).toString("hex")])) as Record<Power, string>;
   const played = new Set<Power>();
   let active: Power[] = [];
   let phase: Phase = newPhase("", 0);
@@ -418,7 +417,9 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
     }
   };
 
-  const powerOf = new Map(POWERS.map((p) => [tokens[p], p]));
+  // Tokens are issued per phase, so a process that outlives its turn is locked out of the next phase.
+  let tokens = {} as Record<Power, string>;
+  let powerOf = new Map<string, Power>();
   const server = await serveMcp({ name: "diplomabench", tools: counted, caller: (t) => powerOf.get(t) });
 
   try {
@@ -443,6 +444,8 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
       }, phaseMs);
       const controller = new AbortController();
       const metas: Partial<Record<Power, TurnMeta>> = {};
+      tokens = Object.fromEntries(POWERS.map((p) => [p, randomBytes(16).toString("hex")])) as Record<Power, string>;
+      powerOf = new Map(POWERS.map((p) => [tokens[p], p]));
       const exitGrace = opts.exitGraceMs ?? EXIT_GRACE_MS;
       // A turn that outlives its phase must not touch the next one.
       const own = phase;
