@@ -49,7 +49,7 @@ const claudeCode: Turner = (model, root) => {
       // Resume whenever the session was saved, even by a turn stopped at the deadline.
       ...(globSync(`projects/*/${session}.jsonl`, { cwd: config }).length ? ["--resume", session] : ["--session-id", session]),
     ];
-    const run = await exec("claude", args, { cwd, input: t.prompt, signal: t.signal, env: { CLAUDE_CONFIG_DIR: config } });
+    const run = await exec("claude", args, { cwd, input: t.prompt, signal: t.signal, env: { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1" } });
     const out = parseJson<{ is_error?: boolean; result?: string; total_cost_usd?: number; usage?: Usage }>(run.stdout);
     return {
       ...meta(run, out?.is_error ? out.result : out || run.aborted ? undefined : "no JSON output"),
@@ -199,7 +199,9 @@ function exec(cmd: string, args: string[], opts: { cwd: string; input: string; s
     // Only what a CLI needs to run; harness settings come from opts.env, never the parent session.
     const inherited = Object.fromEntries(Object.entries(process.env).filter(([k]) => ENV_ALLOWLIST.has(k)));
     // PWD too: some harnesses trust it over the real cwd and would load this repo's AGENTS.md.
-    const child = spawn(cmd, args, { cwd: opts.cwd, env: { ...inherited, PWD: opts.cwd, ...opts.env }, stdio: ["pipe", "pipe", "pipe"] });
+    // No global or system git config: seats are git repos, and harnesses show the git user to the model.
+    const git = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+    const child = spawn(cmd, args, { cwd: opts.cwd, env: { ...inherited, ...git, PWD: opts.cwd, ...opts.env }, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     const stop = () => {

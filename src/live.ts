@@ -23,6 +23,8 @@ export type LiveOptions = {
   press?: number;
   /** Wall-clock limit per phase. Players still working then are stopped and their last orders stand. */
   phaseSeconds?: number;
+  /** How long harnesses get to exit after a phase closes. Default 60s; tests shorten it. */
+  exitGraceMs?: number;
   /** Stop after this many phases, for trial runs. The log's result stays null. */
   maxPhases?: number;
   onPhase?: (log: GameLog) => void | Promise<void>;
@@ -441,6 +443,9 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
       }, phaseMs);
       const controller = new AbortController();
       const metas: Partial<Record<Power, TurnMeta>> = {};
+      const exitGrace = opts.exitGraceMs ?? EXIT_GRACE_MS;
+      // A turn that outlives its phase must not touch the next one.
+      const own = phase;
       const turns = active.map(async (p) => {
         const started = Date.now();
         const prompt = turnPrompt(p, !played.has(p));
@@ -453,21 +458,21 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
             prompt: prompt.text,
             state: current,
             mcp: { url: server.url, token: tokens[p] },
-            call: (name, args) => call(p, name, args),
+            call: (name, args) => (phase === own ? call(p, name, args) : Promise.resolve("Error: This phase is over. End your turn now.")),
             signal: controller.signal,
           });
         } catch (e) {
           metas[p] = { error: e instanceof Error ? e.message : String(e), durationMs: Date.now() - started };
         }
-        if (!phase.done.has(p) && !phase.closed) finish(p);
+        if (phase === own && !own.done.has(p) && !own.closed) finish(p);
       });
       await closed;
       clearTimeout(timer);
       // Timers can fire a hair before Date.now() reaches the deadline, so track how the phase closed.
-      if (!timedOut) await Promise.race([Promise.all(turns), sleep(EXIT_GRACE_MS)]);
+      if (!timedOut) await Promise.race([Promise.all(turns), sleep(exitGrace)]);
       controller.abort();
       // A harness that ignores SIGTERM must not hold up the game.
-      await Promise.race([Promise.all(turns), sleep(EXIT_GRACE_MS)]);
+      await Promise.race([Promise.all(turns), sleep(exitGrace)]);
 
       const orders: Partial<Record<Power, Order[]>> = {};
       const fallbacks: GamePhase["fallbacks"] = [];

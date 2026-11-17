@@ -4,6 +4,7 @@
 // the user's own setup (instruction files, skill names), since a model's
 // account of its own context can't be trusted. One short turn per seat.
 // Usage: node scripts/isolation.ts claude-code:haiku codex:gpt-6.1-sol opencode:opencode-go/glm-5.3-flash
+import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -29,6 +30,13 @@ const markers = [
     const path = join(home, f);
     const first = existsSync(path) ? readFileSync(path, "utf8").split("\n").find((l) => l.trim()) : undefined;
     return first ? [first.trim().slice(0, 40)] : [];
+  }),
+  ...["user.name", "user.email"].flatMap((key) => {
+    try {
+      return [execFileSync("git", ["config", "--global", key], { encoding: "utf8" }).trim()].filter(Boolean);
+    } catch {
+      return [];
+    }
   }),
   ...[".agents/skills", ".claude/skills", ".codex/skills", ".config/opencode/skills"].flatMap((d) =>
     existsSync(join(home, d)) ? readdirSync(join(home, d)).filter((n) => n.includes("-") && n.length >= 6) : [],

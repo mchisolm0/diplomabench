@@ -104,6 +104,29 @@ test("the deadline closes a phase, stops stragglers, and their last orders stand
   expect(log.phases[0]?.moved).toEqual(["ALP"]);
 });
 
+test("a turn that outlives its phase cannot submit into or end the next phase", async () => {
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  let turn = 0;
+  let late = "";
+  const stubborn = script(async (t) => {
+    if (++turn === 1) {
+      await pause(800); // ignores the abort at 500ms; the next phase starts about 50ms later
+      late = await t.call("submit_orders", { orders: ["ALP - ABY"] });
+      return;
+    }
+    await pause(400); // still working when the stale turn above finishes
+    await t.call("submit_orders", { orders: ["ALP - EAL"] });
+    await t.call("end_turn");
+  });
+  const log = await playLiveGame(seats({ ALPHA: stubborn, BETA: holdDriver, GAMMA: holdDriver, DELTA: holdDriver, EPSILON: holdDriver }), {
+    phaseSeconds: 0.5,
+    exitGraceMs: 50,
+    maxPhases: 2,
+  });
+  expect(late).toContain("This phase is over");
+  expect(log.phases[1]?.orders.ALPHA).toEqual([{ unit: "ALP", action: "move", to: "EAL" }]);
+});
+
 test("simulate resolves hypothetical orders without submitting them", async () => {
   let result = "";
   const log = await playLiveGame(
