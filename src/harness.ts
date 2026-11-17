@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { globSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { globSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { CLAUDE_SETTINGS } from "./agents.ts";
 import type { Driver, Turn, TurnMeta } from "./live.ts";
@@ -9,20 +9,23 @@ import type { Driver, Turn, TurnMeta } from "./live.ts";
 /**
  * Session players: one harness session per power for the whole game, resumed
  * each phase. Every harness gets only the diplomabench MCP tools, runs in an
- * empty directory, and is kept away from the user's own instructions, hooks,
- * and plugins.
+ * empty git repo under a private /tmp root (outside HOME, so no parent-folder
+ * config search reaches the user's files), with its own HOME or config dir and
+ * an allowlisted environment.
  */
 export type HarnessName = "claude-code" | "codex" | "opencode";
 export const HARNESSES: readonly HarnessName[] = ["claude-code", "codex", "opencode"];
 
+/** Codex provider settings for players. Use absolute paths, since HOME is replaced. */
 export const CODEX_SETTINGS = join(homedir(), ".config/diplomabench/codex.toml");
 /** OpenCode providers for players, e.g. `{"provider": {...}}`. Use absolute paths in `{file:...}`, since HOME is replaced. */
 export const OPENCODE_SETTINGS = join(homedir(), ".config/diplomabench/opencode.json");
 
-export function harnessDriver(harness: HarnessName, model: string): Driver {
-  const root = join(tmpdir(), `diplomabench-${randomUUID().slice(0, 8)}`);
+/** `root` holds every seat file, including transcripts with private messages; it is mode 0700 and kept after the game. */
+export function harnessDriver(harness: HarnessName, model: string): Driver & { root: string } {
+  const root = mkdtempSync("/tmp/diplomabench-");
   const make = { "claude-code": claudeCode, codex, opencode }[harness];
-  return { id: `${harness}/${model}`, turn: make(model, root) };
+  return { id: `${harness}/${model}`, turn: make(model, root), root };
 }
 
 type Turner = (model: string, root: string) => Driver["turn"];
@@ -37,10 +40,12 @@ const claudeCode: Turner = (model, root) => {
     const cwd = seatDir(root, t);
     const config = join(root, t.power, "claude-home");
     mkdirSync(config, { recursive: true });
-    const mcp = { mcpServers: { diplomabench: { type: "http", url: t.mcp.url, headers: { Authorization: `Bearer ${t.mcp.token}` } } } };
+    // A file, not argv, so the token doesn't show in `ps`.
+    const mcpFile = join(config, "mcp.json");
+    writeFileSync(mcpFile, JSON.stringify({ mcpServers: { diplomabench: { type: "http", url: t.mcp.url, headers: { Authorization: `Bearer ${t.mcp.token}` } } } }), { mode: 0o600 });
     const args = [
       "-p", "--bare", "--settings", CLAUDE_SETTINGS, "--model", model, "--output-format", "json",
-      "--tools", "", "--mcp-config", JSON.stringify(mcp), "--strict-mcp-config", "--allowedTools", "mcp__diplomabench",
+      "--tools", "", "--mcp-config", mcpFile, "--strict-mcp-config", "--allowedTools", "mcp__diplomabench",
       // Resume whenever the session was saved, even by a turn stopped at the deadline.
       ...(globSync(`projects/*/${session}.jsonl`, { cwd: config }).length ? ["--resume", session] : ["--session-id", session]),
     ];
@@ -74,8 +79,10 @@ const codex: Turner = (model, root) => {
   return async (t) => {
     const cwd = seatDir(root, t);
     const home = join(root, t.power, "codex-home");
+    const userHome = join(root, t.power, "home");
     if (!configured) {
       mkdirSync(home, { recursive: true });
+      mkdirSync(userHome, { recursive: true });
       writeFileSync(
         join(home, "config.toml"),
         // Root keys first: TOML puts keys after a [table] inside that table.
@@ -96,7 +103,7 @@ default_tools_approval_mode = "approve"
     }
     const flags = ["--json", "--skip-git-repo-check", ...CODEX_DISABLED.flatMap((f) => ["--disable", f])];
     const args = thread ? ["exec", "resume", thread, ...flags, "-"] : ["exec", ...flags, "-"];
-    const run = await exec("codex", args, { cwd, input: t.prompt, signal: t.signal, env: { CODEX_HOME: home, DIPLOMABENCH_TOKEN: t.mcp.token } });
+    const run = await exec("codex", args, { cwd, input: t.prompt, signal: t.signal, env: { CODEX_HOME: home, HOME: userHome, DIPLOMABENCH_TOKEN: t.mcp.token } });
     const events = jsonLines(run.stdout);
     thread ??= events.find((e) => e.type === "thread.started")?.thread_id as string | undefined;
     const usage = events.findLast((e) => e.type === "turn.completed")?.usage as { input_tokens?: number; output_tokens?: number } | undefined;
@@ -142,7 +149,7 @@ const opencode: Turner = (model, root) => {
       configured = true;
     }
     const args = ["run", "--standalone", "--format", "json", "-m", model, ...(session ? ["--session", session] : [])];
-    const env = { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local/share"), XDG_STATE_HOME: join(home, ".local/state"), DIPLOMABENCH_TOKEN: t.mcp.token, OPENCODE_DISABLE_CLAUDE_CODE: "1" };
+    const env = { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local/share"), XDG_STATE_HOME: join(home, ".local/state"), DIPLOMABENCH_TOKEN: t.mcp.token, OPENCODE_DISABLE_CLAUDE_CODE: "1", OPENCODE_DISABLE_PROJECT_CONFIG: "1" };
     const run = await exec("opencode", args, { cwd, input: t.prompt, signal: t.signal, env });
     const events = jsonLines(run.stdout);
     session ??= events.map((e) => e.sessionID).find((id): id is string => typeof id === "string");
@@ -168,8 +175,15 @@ const tokensIn = (u?: Usage) => (u ? (u.input_tokens ?? 0) + (u.cache_read_input
 function seatDir(root: string, t: Turn): string {
   const dir = join(root, t.power, "work");
   mkdirSync(dir, { recursive: true });
+  // A repo root stops harnesses searching parent folders for AGENTS.md and config.
+  if (!globSync(".git", { cwd: dir }).length) execFileSync("git", ["init", "-q", dir]);
   return dir;
 }
+
+const ENV_ALLOWLIST = new Set([
+  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR",
+  "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
+]);
 
 type Run = { stdout: string; stderr: string; code: number | null; aborted: boolean; durationMs: number };
 
@@ -182,8 +196,8 @@ const meta = (run: Run, error?: string): TurnMeta => ({
 function exec(cmd: string, args: string[], opts: { cwd: string; input: string; signal: AbortSignal; env?: Record<string, string> }): Promise<Run> {
   const started = Date.now();
   return new Promise((resolve) => {
-    // Inherited OpenCode config sources would load after the seat's own config.
-    const inherited = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("OPENCODE_CONFIG")));
+    // Only what a CLI needs to run; harness settings come from opts.env, never the parent session.
+    const inherited = Object.fromEntries(Object.entries(process.env).filter(([k]) => ENV_ALLOWLIST.has(k)));
     // PWD too: some harnesses trust it over the real cwd and would load this repo's AGENTS.md.
     const child = spawn(cmd, args, { cwd: opts.cwd, env: { ...inherited, PWD: opts.cwd, ...opts.env }, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
