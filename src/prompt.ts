@@ -3,7 +3,7 @@ import { MAPS, POWERS, type GameMap, type Power } from "./map.ts";
 import { MAX_MESSAGES_PER_TURN, MAX_MESSAGE_CHARS, type Message } from "./press.ts";
 
 /** Bump whenever prompt text changes, so runs stay comparable. */
-export const PROMPT_VERSION = "v3";
+export const PROMPT_VERSION = "v4";
 
 /** What a player sees when asked to act. `messages` holds only ones it sent or received. */
 export type View = {

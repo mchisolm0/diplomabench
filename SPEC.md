@@ -55,7 +55,7 @@ Maps live in `src/map.ts` as data: provinces, centers, homes, adjacency, plus th
 ## Benchmark
 
 - **No-press** (default): agents see public state, their power, fixed instructions, and their legal orders. No messages.
-- **Press** (`--press N`): N message rounds before each movement phase. Every surviving power acts at once in each round. Up to 3 messages per turn, 600 characters each, to named powers or `ALL`. Players see messages they sent or received from the last 4 phases. Messages never change state.
+- **Press** (`--press N`): N message rounds before each movement phase. Every surviving power acts at once in each round. Up to 3 messages per turn, 600 characters each, to named powers or `ALL`. Players see every message they sent or received this game (prompt v4; v2 and v3 showed only the last 4 phases). Messages never change state.
 - The harness owns state, legal orders, prompts, model calls, parsing, fallback, logging, and scoring. Prompt version, temperature, max tokens, timeout, and retries are fixed per run and recorded.
 - Same-model runs give every power one model. Mixed lineups rotate one seat per game, so batches of 5 games give each model every seat.
 - Headline number is a rating, not a raw average, because a model's average score depends on who it sat with. `pnpm rate` fits Bradley-Terry ratings on the Elo scale: every pair of seats held by different models in one game is a comparison won by the higher score. A 90% interval comes from resampling games. Games pool by prompt version and map.

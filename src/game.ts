@@ -4,9 +4,6 @@ import { POWERS, type MapId, type Power } from "./map.ts";
 import { canSee, normalizeMessages, type Message } from "./press.ts";
 import { PROMPT_VERSION, type View } from "./prompt.ts";
 
-/** Players see messages from this many recent phases, to keep prompts bounded. */
-const MESSAGE_WINDOW_PHASES = 4;
-
 export type GamePhase = PhaseRecord & {
   messages: Message[];
   rejectedMessages: number;
@@ -50,7 +47,7 @@ export async function playGame(
     const phase = phaseName(current);
     const active = POWERS.filter((p) => Object.values(current.units).includes(p));
     const history = log.phases.map(({ messages: _m, rejectedMessages: _r, decisions: _d, talks: _t, ...record }) => record);
-    const earlier = log.phases.slice(-MESSAGE_WINDOW_PHASES).flatMap((p) => p.messages);
+    const earlier = log.phases.flatMap((p) => p.messages);
     const messages: Message[] = [];
     const view = (power: Power): View => ({
       power,
