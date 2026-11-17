@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { globSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { CLAUDE_SETTINGS } from "./agents.ts";
@@ -33,7 +33,6 @@ type Turner = (model: string, root: string) => Driver["turn"];
  */
 const claudeCode: Turner = (model, root) => {
   const session = randomUUID();
-  let started = false;
   return async (t) => {
     const cwd = seatDir(root, t);
     const config = join(root, t.power, "claude-home");
@@ -42,13 +41,13 @@ const claudeCode: Turner = (model, root) => {
     const args = [
       "-p", "--bare", "--settings", CLAUDE_SETTINGS, "--model", model, "--output-format", "json",
       "--tools", "", "--mcp-config", JSON.stringify(mcp), "--strict-mcp-config", "--allowedTools", "mcp__diplomabench",
-      ...(started ? ["--resume", session] : ["--session-id", session]),
+      // Resume whenever the session was saved, even by a turn stopped at the deadline.
+      ...(globSync(`projects/*/${session}.jsonl`, { cwd: config }).length ? ["--resume", session] : ["--session-id", session]),
     ];
     const run = await exec("claude", args, { cwd, input: t.prompt, signal: t.signal, env: { CLAUDE_CONFIG_DIR: config } });
     const out = parseJson<{ is_error?: boolean; result?: string; total_cost_usd?: number; usage?: Usage }>(run.stdout);
-    started ||= out !== undefined;
     return {
-      ...meta(run, out?.is_error ? out.result : out ? undefined : "no JSON output"),
+      ...meta(run, out?.is_error ? out.result : out || run.aborted ? undefined : "no JSON output"),
       sessionId: session,
       reply: out?.result,
       costUsd: out?.total_cost_usd,

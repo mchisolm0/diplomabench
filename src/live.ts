@@ -434,7 +434,11 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
           resolve();
         };
       });
-      const timer = setTimeout(() => closePhase(), phaseMs);
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        closePhase();
+      }, phaseMs);
       const controller = new AbortController();
       const metas: Partial<Record<Power, TurnMeta>> = {};
       const turns = active.map(async (p) => {
@@ -459,7 +463,8 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
       });
       await closed;
       clearTimeout(timer);
-      if (Date.now() < phase.deadline) await Promise.race([Promise.all(turns), sleep(EXIT_GRACE_MS)]);
+      // Timers can fire a hair before Date.now() reaches the deadline, so track how the phase closed.
+      if (!timedOut) await Promise.race([Promise.all(turns), sleep(EXIT_GRACE_MS)]);
       controller.abort();
       // A harness that ignores SIGTERM must not hold up the game.
       await Promise.race([Promise.all(turns), sleep(EXIT_GRACE_MS)]);
