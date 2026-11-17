@@ -103,7 +103,8 @@ default_tools_approval_mode = "approve"
     }
     const flags = ["--json", "--skip-git-repo-check", ...CODEX_DISABLED.flatMap((f) => ["--disable", f])];
     const args = thread ? ["exec", "resume", thread, ...flags, "-"] : ["exec", ...flags, "-"];
-    const run = await exec("codex", args, { cwd, input: t.prompt, signal: t.signal, env: { CODEX_HOME: home, HOME: userHome, DIPLOMABENCH_TOKEN: t.mcp.token } });
+    const keys = namedEnv(readFileSync(CODEX_SETTINGS, "utf8"), /env_key\s*=\s*"([^"]+)"/g);
+    const run = await exec("codex", args, { cwd, input: t.prompt, signal: t.signal, env: { ...keys, CODEX_HOME: home, HOME: userHome, DIPLOMABENCH_TOKEN: t.mcp.token } });
     const events = jsonLines(run.stdout);
     thread ??= events.find((e) => e.type === "thread.started")?.thread_id as string | undefined;
     const usage = events.findLast((e) => e.type === "turn.completed")?.usage as { input_tokens?: number; output_tokens?: number } | undefined;
@@ -149,7 +150,8 @@ const opencode: Turner = (model, root) => {
       configured = true;
     }
     const args = ["run", "--standalone", "--format", "json", "-m", model, ...(session ? ["--session", session] : [])];
-    const env = { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local/share"), XDG_STATE_HOME: join(home, ".local/state"), DIPLOMABENCH_TOKEN: t.mcp.token, OPENCODE_DISABLE_CLAUDE_CODE: "1", OPENCODE_DISABLE_PROJECT_CONFIG: "1" };
+    const keys = namedEnv(readFileSync(OPENCODE_SETTINGS, "utf8"), /\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g);
+    const env = { ...keys, HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local/share"), XDG_STATE_HOME: join(home, ".local/state"), DIPLOMABENCH_TOKEN: t.mcp.token, OPENCODE_DISABLE_CLAUDE_CODE: "1", OPENCODE_DISABLE_PROJECT_CONFIG: "1" };
     const run = await exec("opencode", args, { cwd, input: t.prompt, signal: t.signal, env });
     const events = jsonLines(run.stdout);
     session ??= events.map((e) => e.sessionID).find((id): id is string => typeof id === "string");
@@ -178,6 +180,11 @@ function seatDir(root: string, t: Turn): string {
   // A repo root stops harnesses searching parent folders for AGENTS.md and config.
   if (!globSync(".git", { cwd: dir }).length) execFileSync("git", ["init", "-q", dir]);
   return dir;
+}
+
+/** The variables a provider settings file names for its keys (`env_key`, `{env:...}`), taken from the parent environment. */
+function namedEnv(settings: string, pattern: RegExp): Record<string, string> {
+  return Object.fromEntries([...settings.matchAll(pattern)].flatMap((m) => (m[1] && process.env[m[1]] ? [[m[1], process.env[m[1]] as string]] : [])));
 }
 
 const ENV_ALLOWLIST = new Set([

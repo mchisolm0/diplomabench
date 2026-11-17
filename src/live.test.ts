@@ -1,3 +1,4 @@
+import { request } from "node:http";
 import { expect, test } from "vitest";
 import { holdDriver, playLiveGame, type Driver, type Turn } from "./live.ts";
 import { POWERS, type Power } from "./map.ts";
@@ -109,9 +110,17 @@ test("a turn that outlives its phase cannot submit into or end the next phase", 
   let turn = 0;
   let late = "";
   let lateHttp = 0;
+  let slowBody = 0;
   const stubborn = script(async (t) => {
     if (++turn === 1) {
-      await pause(800); // ignores the abort at 500ms; the next phase starts about 50ms later
+      // Headers sent while the token is live, body only after the next phase has started.
+      const slow = request(t.mcp.url, { method: "POST", headers: { authorization: `Bearer ${t.mcp.token}`, "content-type": "application/json" } });
+      const status = new Promise<number>((resolve) => slow.on("response", (res) => resolve(res.statusCode ?? 0)));
+      slow.flushHeaders();
+      await pause(400);
+      await pause(400); // ignores the abort at 500ms; the next phase starts about 50ms later
+      slow.end(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "submit_orders", arguments: { orders: ["ALP - ABY"] } } }));
+      slowBody = await status;
       late = await t.call("submit_orders", { orders: ["ALP - ABY"] });
       const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "submit_orders", arguments: { orders: ["ALP - ABY"] } } });
       lateHttp = (await fetch(t.mcp.url, { method: "POST", headers: { authorization: `Bearer ${t.mcp.token}` }, body })).status;
@@ -128,6 +137,7 @@ test("a turn that outlives its phase cannot submit into or end the next phase", 
   });
   expect(late).toContain("This phase is over");
   expect(lateHttp).toBe(401);
+  expect(slowBody).toBe(401);
   expect(log.phases[1]?.orders.ALPHA).toEqual([{ unit: "ALP", action: "move", to: "EAL" }]);
 });
 

@@ -75,8 +75,7 @@ export async function serveMcp<Caller>(opts: {
     if (req.url?.split("?")[0] !== "/mcp") return reply(404);
     if (req.method !== "POST") return reply(405);
     const token = /^Bearer (.+)$/.exec(req.headers.authorization ?? "")?.[1];
-    const caller = token === undefined ? undefined : opts.caller(token);
-    if (caller === undefined) return reply(401, { error: "unknown token" });
+    if (token === undefined) return reply(401, { error: "missing token" });
 
     let body: unknown;
     try {
@@ -84,6 +83,9 @@ export async function serveMcp<Caller>(opts: {
     } catch {
       return reply(400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } });
     }
+    // Resolve the caller only now: tokens can expire while a slow body arrives.
+    const caller = opts.caller(token);
+    if (caller === undefined) return reply(401, { error: "unknown token" });
     const answer = async (value: unknown) => {
       if (typeof value !== "object" || value === null || typeof (value as Rpc).method !== "string") {
         return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request" } };

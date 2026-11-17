@@ -6,7 +6,7 @@
 // Usage: node scripts/isolation.ts claude-code:haiku codex:gpt-6.1-sol opencode:opencode-go/glm-5.3-flash
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, lstatSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { HARNESSES, harnessDriver, type HarnessName } from "../src/harness.ts";
@@ -48,12 +48,15 @@ function leaks(root: string): string[] {
   // readdirSync, not glob: glob skips dot-folders, where harnesses keep their data and logs.
   return readdirSync(root, { recursive: true, encoding: "utf8" }).filter((f) => !f.split("/").includes(".git")).flatMap((f) => {
     const path = join(root, f);
-    if (!statSync(path).isFile()) return [];
-    const text = readFileSync(path, "latin1");
+    // lstat: harnesses link their own binaries into the seat (Codex's arg0 shims), and those aren't seat output.
+    if (!lstatSync(path).isFile()) return [];
+    const bytes = readFileSync(path);
+    const text = bytes.toString("latin1");
     // Harness logs name every MCP server they connect to; only the game's is allowed.
     const servers = text.split("\n").filter((l) => l.includes("mcp")).flatMap((l) => [...l.matchAll(/\bserver=([\w.-]+)/g)].map((m) => m[1] ?? ""));
     return [
-      ...[canary, ...markers].filter((m) => text.includes(m)).map((m) => `${f}: ${m === canary ? "canary" : m}`),
+      // Bytes, so non-ASCII markers match their UTF-8 encoding.
+      ...[canary, ...markers].filter((m) => bytes.includes(Buffer.from(m, "utf8"))).map((m) => `${f}: ${m === canary ? "canary" : m}`),
       ...[...new Set(servers)].filter((n) => n !== "diplomabench").map((n) => `${f}: MCP server ${n}`),
     ];
   });
