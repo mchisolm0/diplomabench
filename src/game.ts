@@ -13,6 +13,8 @@ export type GamePhase = PhaseRecord & {
 
 export type GameLog = {
   promptVersion: string;
+  /** How players were run: one call per decision, or a session per player. Missing means oneshot. */
+  mode?: "oneshot" | "rounds" | "async";
   /** Missing in logs from before maps were data; those are v1. */
   map: MapId;
   pressRounds: number;
@@ -34,6 +36,7 @@ export async function playGame(
   let state = initialState(opts.map);
   const log: GameLog = {
     promptVersion: PROMPT_VERSION,
+    mode: "oneshot",
     map: state.map,
     pressRounds,
     seats: Object.fromEntries(POWERS.map((p) => [p, seats[p].id])) as Record<Power, string>,
