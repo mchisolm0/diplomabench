@@ -139,6 +139,7 @@ const opencode: Turner = (model, root) => {
           tools: { skill: false },
         }),
       );
+      configured = true;
     }
     const args = ["run", "--standalone", "--format", "json", "-m", model, ...(session ? ["--session", session] : [])];
     const env = { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local/share"), XDG_STATE_HOME: join(home, ".local/state"), DIPLOMABENCH_TOKEN: t.mcp.token, OPENCODE_DISABLE_CLAUDE_CODE: "1" };
