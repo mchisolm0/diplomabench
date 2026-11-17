@@ -1,12 +1,18 @@
 // Usage: node src/cli.ts [--model sonnet | --seats sonnet,opus,random,hold,haiku]
 //                        [--map v2] [--press 2] [--games 10] [--parallel 3] [--out runs]
-// A seat is "hold", "random", or a Claude model name. --model fills every seat.
+//        node src/cli.ts --seats claude-code:fable,codex:gpt-6.1-sol,opencode:opencode-go/kimi-k3,hold,random
+//                        [--mode rounds|async] [--press 3] [--deadline 600] [--phases 2]
+// A seat is "hold", "random", a Claude model name (one call per decision), or
+// "<harness>:<model>" (one session for the whole game; see src/harness.ts).
+// Session seats can't share a game with one-call seats. --model fills every seat.
 // Mixed lineups rotate one seat per game, so run multiples of 5 for balance.
 import { mkdir, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { CLAUDE_SETTINGS, holdAgent, randomAgent, claudeCodeAgent, type Agent } from "./agents.ts";
 import { centerCount, formatOrder, scores } from "./engine.ts";
 import { playGame, type GameLog } from "./game.ts";
+import { HARNESSES, harnessDriver, type HarnessName } from "./harness.ts";
+import { holdDriver, playLiveGame, randomDriver, type Driver, type Mode } from "./live.ts";
 import { MAPS, MAP_IDS, POWERS, type MapId, type Power } from "./map.ts";
 import { readUsage, usageDelta } from "./usage.ts";
 
@@ -15,6 +21,9 @@ const { values } = parseArgs({
     model: { type: "string" },
     seats: { type: "string" },
     map: { type: "string", default: "v1" },
+    mode: { type: "string", default: "rounds" },
+    deadline: { type: "string" },
+    phases: { type: "string" },
     press: { type: "string", default: "0" },
     games: { type: "string", default: "1" },
     parallel: { type: "string", default: "1" },
@@ -30,6 +39,14 @@ if (!MAP_IDS.includes(map)) throw new Error(`--map must be one of ${MAP_IDS.join
 const games = Number(values.games);
 const pressRounds = Number(values.press);
 const seed = Number(values.seed);
+const harnessOf = (spec: string) => spec.split(":")[0] as HarnessName;
+const live = specs.some((s) => s.includes(":"));
+for (const s of specs) {
+  if (s.includes(":") && !HARNESSES.includes(harnessOf(s))) throw new Error(`unknown harness in ${s}; use ${HARNESSES.join(", ")}`);
+  if (live && !s.includes(":") && s !== "hold" && s !== "random") throw new Error(`${s} is a one-call seat; session games need <harness>:<model> seats`);
+}
+const mode = values.mode as Mode;
+if (mode !== "rounds" && mode !== "async") throw new Error("--mode must be rounds or async");
 
 function agentFor(spec: string, seed: number): Agent {
   if (spec === "hold") return holdAgent;
@@ -37,12 +54,18 @@ function agentFor(spec: string, seed: number): Agent {
   return claudeCodeAgent(spec);
 }
 
-const label = `${map}-${[...new Set(specs)].join("+")}${pressRounds ? `-press${pressRounds}` : ""}`;
+function driverFor(spec: string, seed: number): Driver {
+  if (spec === "hold") return holdDriver;
+  if (spec === "random") return randomDriver(seed);
+  return harnessDriver(harnessOf(spec), spec.slice(spec.indexOf(":") + 1));
+}
+
+const label = `${map}-${live ? `${mode}-` : ""}${[...new Set(specs)].map((s) => s.replace(/[/:]/g, "_")).join("+")}${pressRounds ? `-press${pressRounds}` : ""}`;
 const dir = `${values.out}/${new Date().toISOString().replace(/[:.]/g, "-")}-${label}`;
 await mkdir(dir, { recursive: true });
 
 // Subscription usage is only meaningful when Claude seats play.
-const usesClaude = specs.some((s) => s !== "hold" && s !== "random");
+const usesClaude = specs.some((s) => s !== "hold" && s !== "random" && (!s.includes(":") || harnessOf(s) === "claude-code"));
 const usageBefore = usesClaude ? await readUsage(CLAUDE_SETTINGS) : null;
 
 const logs: GameLog[] = [];
@@ -53,17 +76,19 @@ async function worker() {
       POWERS.map((p, i) => [p, agentFor(specs[(i + g) % POWERS.length] ?? "hold", seed + g * 10 + i)]),
     ) as Record<Power, Agent>;
     const file = `${dir}/game-${String(g + 1).padStart(2, "0")}.json`;
-    const log = await playGame(seats, {
-      map,
-      pressRounds,
-      onPhase: async (log) => {
-        if (games === 1) printPhase(log);
-        await writeFile(file, JSON.stringify(log, null, 2));
-      },
-    });
+    const onPhase = async (log: GameLog) => {
+      if (games === 1) printPhase(log);
+      await writeFile(file, JSON.stringify(log, null, 2));
+    };
+    const log = live
+      ? await playLiveGame(
+          Object.fromEntries(POWERS.map((p, i) => [p, driverFor(specs[(i + g) % POWERS.length] ?? "hold", seed + g * 10 + i)])) as Record<Power, Driver>,
+          { map, mode, press: pressRounds, phaseSeconds: values.deadline ? Number(values.deadline) : undefined, maxPhases: values.phases ? Number(values.phases) : undefined, onPhase },
+        )
+      : await playGame(seats, { map, pressRounds, onPhase });
     logs[g] = log;
     const r = log.final.result;
-    console.log(`game ${g + 1}: ${r?.kind} ${r?.winners.join(", ") ?? ""} after ${log.phases.length} phases  ${POWERS.map((p) => `${p[0]}${centerCount(log.final, p)}`).join(" ")}`);
+    console.log(`game ${g + 1}: ${r ? `${r.kind} ${r.winners.join(", ")}` : "stopped"} after ${log.phases.length} phases  ${POWERS.map((p) => `${p[0]}${centerCount(log.final, p)}`).join(" ")}`);
   }
 }
 await Promise.all(Array.from({ length: Math.min(Number(values.parallel), games) }, worker));
@@ -87,7 +112,8 @@ function printPhase(log: GameLog) {
   const moved = new Set(phase.moved);
   const orders = POWERS.flatMap((p) => (phase.orders[p] ?? []).map((o) => `${p[0]}:${formatOrder(o)}${o.action === "move" && !moved.has(o.unit) ? "✗" : ""}`));
   const counts = POWERS.map((p) => `${p[0]}${centerCount(log.final, p)}`).join(" ");
-  console.log(`${phase.phase}  ${counts}  msgs ${phase.messages.length}  fallbacks ${phase.fallbacks.length}  ${orders.join(", ")}`);
+  const errors = Object.entries(phase.decisions).filter(([, d]) => d?.error).map(([p, d]) => `${p}: ${d?.error}`);
+  console.log(`${phase.phase}  ${counts}  msgs ${phase.messages.length}  fallbacks ${phase.fallbacks.length}  ${orders.join(", ")}${errors.length ? `\n  errors: ${errors.join("; ")}` : ""}`);
 }
 
 /** Score (see `scores`) is the headline; center share and solos explain it. */
@@ -126,6 +152,7 @@ function summarize(logs: GameLog[]) {
   return {
     games: logs.length,
     map,
+    mode: live ? mode : "oneshot",
     pressRounds,
     outcomes,
     avgPhases: round(sum((l) => l.phases.length) / logs.length),

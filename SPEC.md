@@ -62,8 +62,19 @@ Maps live in `src/map.ts` as data: provinces, centers, homes, adjacency, plus th
 
 ## Players
 
-- `claude-code/<model>`: a headless `claude -p --bare` call with no tools and a JSON schema for `{plan, orders}`. OpenRouter comes later.
-- `baseline/hold` and `baseline/random` for offline runs and tests.
+- One-call players (`--seats sonnet,...`): a headless `claude -p --bare` call per decision with no tools and a JSON schema for `{plan, orders}`. The prompt re-describes the game each time.
+- Session players (`--seats claude-code:fable,codex:gpt-6.1-sol,opencode:opencode-go/glm-5.3-flash,...`): one harness session per power for the whole game, resumed each phase. The player decides what to look at and when, compacts its own context, and keeps private notes. One-call and session seats can't share a game.
+- `hold` and `random` baselines work with either.
+
+## Session players
+
+- The game serves its tools over MCP (Streamable HTTP, `src/mcp.ts`). Each power gets its own token, so a player only ever sees its own messages and notes.
+- Tools: `rules`, `status`, `map`, `legal_orders`, `history`, `inbox`, `search_messages`, `send_message`, `wait`, `simulate` (try orders through the real adjudicator), `submit_orders` (resubmitting replaces), `end_turn`, `read_notes`, `write_notes`.
+- Each phase, every surviving power gets one turn: a short update (phase, last results, unread count). The first turn also carries the rules. The phase resolves when everyone has called `end_turn`, or at the deadline (`--deadline`, seconds), when stragglers are stopped and their last submitted orders stand.
+- `--mode rounds` (default): messages are held until every power still working has called `wait`, then delivered together. Up to `--press` rounds of 3 messages each. Reproducible and fair to slow models.
+- `--mode async`: messages are delivered as soon as they are sent, and `wait` returns when one arrives. Up to 10 messages per phase. Closer to real Diplomacy, but speed now matters, so durations are logged.
+- Harnesses (`src/harness.ts`) run each seat in an empty directory with only the game tools and none of the user's instructions, hooks, plugins, or memory: Claude Code with `--bare --tools ""` and its own config dir; Codex with a fresh `CODEX_HOME`, shell off and a read-only sandbox (code mode stays on, since newer models reach MCP tools through it); OpenCode as a standalone server with HOME replaced and every built-in permission denied. `pnpm isolation <seats>` asks each seat for its tools and instructions and has it try to read a canary file; run it after harness upgrades.
+- Ratings label seats `<harness>/<model>`, and pool session games apart from one-call games.
 
 ## Human play
 

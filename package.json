@@ -9,7 +9,8 @@
     "game": "node src/cli.ts",
     "oracle": "node scripts/differential.ts",
     "analyze": "node scripts/analyze.ts",
-    "rate": "node scripts/rate.ts"
+    "rate": "node scripts/rate.ts",
+    "isolation": "node scripts/isolation.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

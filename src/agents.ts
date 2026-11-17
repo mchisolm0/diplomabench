@@ -13,6 +13,8 @@ export type CallMeta = {
   durationMs?: number;
   inputTokens?: number;
   outputTokens?: number;
+  /** Game tool calls made during a session turn. */
+  toolCalls?: number;
 };
 
 /** Raw orders as returned; the engine validates them. */

@@ -21,7 +21,8 @@ const BUILDS: Record<GameMap["builds"], string> = {
   owned: "you build armies up to the difference in your empty owned centers, home first, then those nearest your home",
 };
 
-export function systemPrompt(map: GameMap): string {
+/** The rules and scoring every player gets, in any harness. */
+export function rulesText(map: GameMap): string {
   return `You are playing Diplomabench, a five-player, armies-only variant of Diplomacy. You control one power.
 
 Rules:
@@ -36,10 +37,10 @@ Rules:
 
 Scoring:
 - A power that owns ${map.soloCenters} or more centers after a Fall wins outright and scores 1. Every other power scores 0, however many centers it holds.
-- Otherwise the game ends after Fall ${map.lastYear} and each power scores its centers divided by ${map.centers.length}, the total number of centers.
-
-Reply with JSON only, in the shape the task asks for.`;
+- Otherwise the game ends after Fall ${map.lastYear} and each power scores its centers divided by ${map.centers.length}, the total number of centers.`;
 }
+
+export const systemPrompt = (map: GameMap) => `${rulesText(map)}\n\nReply with JSON only, in the shape the task asks for.`;
 
 export function buildPrompt(view: View, task: Task): string {
   const { power, state, history, messages } = view;
@@ -48,19 +49,9 @@ export function buildPrompt(view: View, task: Task): string {
   const lines = [
     `You are ${power}. Your home is ${map.homes[power].join(", ")}. Phase: ${season} ${state.year}. Negotiation is ${view.press ? "on" : "off"}.`,
     "",
-    "Map (province: neighbors):",
-    ...map.provinces.map((p) => {
-      const home = POWERS.find((o) => map.homes[o].includes(p));
-      const tags = [map.centers.includes(p) && "center", home && `${home} home`].filter(Boolean);
-      return `${p}${tags.length ? ` (${tags.join(", ")})` : ""}: ${(map.adjacent[p] ?? []).join(", ")}`;
-    }),
+    ...mapLines(map),
     "",
-    "Powers (centers owned; units):",
-    ...POWERS.map((p) => {
-      const owned = map.centers.filter((c) => state.owners[c] === p);
-      return `${p}: ${centerCount(state, p)} [${owned.join(", ")}]; units ${unitsOf(state, p).join(", ") || "none"}`;
-    }),
-    `Neutral centers: ${map.centers.filter((c) => !state.owners[c]).join(", ") || "none"}`,
+    ...boardLines(state),
     "",
     "History:",
     ...(history.length ? history.map(describePhase) : ["(first phase)"]),
@@ -73,18 +64,41 @@ export function buildPrompt(view: View, task: Task): string {
   return lines.join("\n");
 }
 
+export function mapLines(map: GameMap): string[] {
+  return [
+    "Map (province: neighbors):",
+    ...map.provinces.map((p) => {
+      const home = POWERS.find((o) => map.homes[o].includes(p));
+      const tags = [map.centers.includes(p) && "center", home && `${home} home`].filter(Boolean);
+      return `${p}${tags.length ? ` (${tags.join(", ")})` : ""}: ${(map.adjacent[p] ?? []).join(", ")}`;
+    }),
+  ];
+}
+
+export function boardLines(state: State): string[] {
+  const map = MAPS[state.map];
+  return [
+    "Powers (centers owned; units):",
+    ...POWERS.map((p) => {
+      const owned = map.centers.filter((c) => state.owners[c] === p);
+      return `${p}: ${centerCount(state, p)} [${owned.join(", ")}]; units ${unitsOf(state, p).join(", ") || "none"}`;
+    }),
+    `Neutral centers: ${map.centers.filter((c) => !state.owners[c]).join(", ") || "none"}`,
+  ];
+}
+
 const ORDERS_TASK = `Task: submit orders. Reply {"plan": "<one or two sentences>", "orders": ["<order>", ...]} with exactly one order per unit, copied from your legal orders.`;
 
 const talkTask = (round: number, rounds: number) =>
   `Task: negotiation round ${round} of ${rounds} before this phase's orders. Reply {"messages": [{"to": ["BETA"], "text": "..."}]}. "to" lists powers, or ["ALL"] to broadcast. Send at most ${MAX_MESSAGES_PER_TURN} messages of at most ${MAX_MESSAGE_CHARS} characters each, or [] to stay silent.`;
 
-function describeMessage(power: Power, m: Message): string {
+export function describeMessage(power: Power, m: Message): string {
   const from = m.from === power ? "you" : m.from;
   const to = m.broadcast ? "ALL" : m.to.map((p) => (p === power ? "you" : p)).join(", ");
   return `${m.phase} r${m.round} ${from} -> ${to}: ${m.text}`;
 }
 
-function describePhase(r: PhaseRecord): string {
+export function describePhase(r: PhaseRecord): string {
   const moved = new Set(r.moved);
   const orders = POWERS.flatMap((p) =>
     (r.orders[p] ?? []).map((o) => {
