@@ -33,6 +33,7 @@ type Turner = (model: string, root: string) => Driver["turn"];
  */
 const claudeCode: Turner = (model, root) => {
   const session = randomUUID();
+  let started = false;
   return async (t) => {
     const cwd = seatDir(root, t);
     const config = join(root, t.power, "claude-home");
@@ -41,10 +42,11 @@ const claudeCode: Turner = (model, root) => {
     const args = [
       "-p", "--bare", "--settings", CLAUDE_SETTINGS, "--model", model, "--output-format", "json",
       "--tools", "", "--mcp-config", JSON.stringify(mcp), "--strict-mcp-config", "--allowedTools", "mcp__diplomabench",
-      ...(t.first ? ["--session-id", session] : ["--resume", session]),
+      ...(started ? ["--resume", session] : ["--session-id", session]),
     ];
     const run = await exec("claude", args, { cwd, input: t.prompt, signal: t.signal, env: { CLAUDE_CONFIG_DIR: config } });
     const out = parseJson<{ is_error?: boolean; result?: string; total_cost_usd?: number; usage?: Usage }>(run.stdout);
+    started ||= out !== undefined;
     return {
       ...meta(run, out?.is_error ? out.result : out ? undefined : "no JSON output"),
       sessionId: session,
@@ -69,10 +71,11 @@ const CODEX_DISABLED = [
 /** Codex: a fresh CODEX_HOME per seat holding only the provider settings and the game server. */
 const codex: Turner = (model, root) => {
   let thread: string | undefined;
+  let configured = false;
   return async (t) => {
     const cwd = seatDir(root, t);
     const home = join(root, t.power, "codex-home");
-    if (t.first) {
+    if (!configured) {
       mkdirSync(home, { recursive: true });
       writeFileSync(
         join(home, "config.toml"),
@@ -90,6 +93,7 @@ tool_timeout_sec = 90
 default_tools_approval_mode = "approve"
 `,
       );
+      configured = true;
     }
     const flags = ["--json", "--skip-git-repo-check", ...CODEX_DISABLED.flatMap((f) => ["--disable", f])];
     const args = thread ? ["exec", "resume", thread, ...flags, "-"] : ["exec", ...flags, "-"];
@@ -115,10 +119,11 @@ default_tools_approval_mode = "approve"
  */
 const opencode: Turner = (model, root) => {
   let session: string | undefined;
+  let configured = false;
   return async (t) => {
     const cwd = seatDir(root, t);
     const home = join(root, t.power, "opencode-home");
-    if (t.first) {
+    if (!configured) {
       mkdirSync(join(home, ".config/opencode"), { recursive: true });
       const { provider } = JSON.parse(readFileSync(OPENCODE_SETTINGS, "utf8")) as { provider?: unknown };
       writeFileSync(
@@ -169,6 +174,7 @@ function seatDir(root: string, t: Turn): string {
 type Run = { stdout: string; stderr: string; code: number | null; aborted: boolean; durationMs: number };
 
 const meta = (run: Run, error?: string): TurnMeta => ({
+  transcript: run.stdout,
   durationMs: run.durationMs,
   error: error ?? (run.aborted ? "stopped at the phase deadline" : run.code === 0 ? undefined : `exited ${run.code}: ${(run.stderr || run.stdout).slice(-500)}`),
 });
@@ -176,11 +182,16 @@ const meta = (run: Run, error?: string): TurnMeta => ({
 function exec(cmd: string, args: string[], opts: { cwd: string; input: string; signal: AbortSignal; env?: Record<string, string> }): Promise<Run> {
   const started = Date.now();
   return new Promise((resolve) => {
+    // Inherited OpenCode config sources would load after the seat's own config.
+    const inherited = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("OPENCODE_CONFIG")));
     // PWD too: some harnesses trust it over the real cwd and would load this repo's AGENTS.md.
-    const child = spawn(cmd, args, { cwd: opts.cwd, env: { ...process.env, PWD: opts.cwd, ...opts.env }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(cmd, args, { cwd: opts.cwd, env: { ...inherited, PWD: opts.cwd, ...opts.env }, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
-    const stop = () => child.kill("SIGTERM");
+    const stop = () => {
+      child.kill("SIGTERM");
+      setTimeout(() => child.exitCode === null && child.signalCode === null && child.kill("SIGKILL"), 5000).unref();
+    };
     opts.signal.addEventListener("abort", stop, { once: true });
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));

@@ -45,6 +45,16 @@ for (const s of specs) {
   if (s.includes(":") && !HARNESSES.includes(harnessOf(s))) throw new Error(`unknown harness in ${s}; use ${HARNESSES.join(", ")}`);
   if (live && !s.includes(":") && s !== "hold" && s !== "random") throw new Error(`${s} is a one-call seat; session games need <harness>:<model> seats`);
 }
+/** A positive whole number from a flag, or undefined when the flag is absent. */
+function positive(flag: string, value: string | undefined, max = Number.MAX_SAFE_INTEGER): number | undefined {
+  if (value === undefined) return undefined;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0 || n > max) throw new Error(`--${flag} must be a whole number from 1 to ${max}`);
+  return n;
+}
+// setTimeout's limit, in seconds.
+const deadline = positive("deadline", values.deadline, Math.floor((2 ** 31 - 1) / 1000));
+const maxPhases = positive("phases", values.phases);
 const mode = values.mode as Mode;
 if (mode !== "rounds" && mode !== "async") throw new Error("--mode must be rounds or async");
 
@@ -83,7 +93,7 @@ async function worker() {
     const log = live
       ? await playLiveGame(
           Object.fromEntries(POWERS.map((p, i) => [p, driverFor(specs[(i + g) % POWERS.length] ?? "hold", seed + g * 10 + i)])) as Record<Power, Driver>,
-          { map, mode, press: pressRounds, phaseSeconds: values.deadline ? Number(values.deadline) : undefined, maxPhases: values.phases ? Number(values.phases) : undefined, onPhase },
+          { map, mode, press: pressRounds, phaseSeconds: deadline, maxPhases, onPhase },
         )
       : await playGame(seats, { map, pressRounds, onPhase });
     logs[g] = log;

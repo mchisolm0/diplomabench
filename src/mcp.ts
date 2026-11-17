@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
 /** A tool's reply. Throwing `ToolError` sends the message back as a tool error. */
@@ -60,7 +60,14 @@ export async function serveMcp<Caller>(opts: {
     }
   }
 
-  const server: Server = createServer(async (req, res) => {
+  const server: Server = createServer((req, res) => {
+    respond(req, res).catch((e: unknown) => {
+      if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32603, message: e instanceof Error ? e.message : String(e) } }));
+    });
+  });
+
+  async function respond(req: IncomingMessage, res: ServerResponse) {
     const reply = (status: number, body?: unknown) => {
       res.writeHead(status, body === undefined ? {} : { "content-type": "application/json" });
       res.end(body === undefined ? undefined : JSON.stringify(body));
@@ -71,13 +78,17 @@ export async function serveMcp<Caller>(opts: {
     const caller = token === undefined ? undefined : opts.caller(token);
     if (caller === undefined) return reply(401, { error: "unknown token" });
 
-    let body: Rpc | Rpc[];
+    let body: unknown;
     try {
-      body = JSON.parse(await read(req)) as Rpc | Rpc[];
+      body = JSON.parse(await read(req));
     } catch {
       return reply(400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } });
     }
-    const answer = async (msg: Rpc) => {
+    const answer = async (value: unknown) => {
+      if (typeof value !== "object" || value === null || typeof (value as Rpc).method !== "string") {
+        return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request" } };
+      }
+      const msg = value as Rpc;
       if (msg.id === undefined || msg.id === null) return undefined; // notification
       try {
         return { jsonrpc: "2.0", id: msg.id, result: await handle(msg, caller) };
@@ -89,7 +100,7 @@ export async function serveMcp<Caller>(opts: {
     const answers = (await Promise.all((Array.isArray(body) ? body : [body]).map(answer))).filter(Boolean);
     if (!answers.length) return reply(202);
     reply(200, Array.isArray(body) ? answers : answers[0]);
-  });
+  }
 
   // Clients reuse sockets between tool calls that can be minutes apart. Node's
   // 5s default closes them first, and the client's next call dies with ECONNRESET.

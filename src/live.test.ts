@@ -121,7 +121,7 @@ test("simulate resolves hypothetical orders without submitting them", async () =
   expect(log.phases[0]?.moved).toEqual([]);
 });
 
-test("the MCP endpoint lists and runs tools for the token's power and rejects unknown tokens", async () => {
+test("the MCP endpoint lists and runs tools for the token's power and rejects unknown tokens and bad requests", async () => {
   const rpc = async (t: Turn, method: string, params: object, token = t.mcp.token) => {
     const res = await fetch(t.mcp.url, {
       method: "POST",
@@ -139,6 +139,8 @@ test("the MCP endpoint lists and runs tools for the token's power and rejects un
         out.tools = list.map((x) => x.name);
         out.status = (await rpc(t, "tools/call", { name: "status", arguments: {} })).body?.result;
         out.denied = (await rpc(t, "tools/list", {}, "nope")).status;
+        const bad = await fetch(t.mcp.url, { method: "POST", headers: { authorization: `Bearer ${t.mcp.token}` }, body: "null" });
+        out.invalid = await bad.json();
         await rpc(t, "tools/call", { name: "end_turn", arguments: {} });
       }),
     }),
@@ -148,4 +150,5 @@ test("the MCP endpoint lists and runs tools for the token's power and rejects un
   expect(out.tools).toContain("submit_orders");
   expect(JSON.stringify(out.status)).toContain("You are ALPHA.");
   expect(out.denied).toBe(401);
+  expect(out.invalid).toEqual({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request" } });
 });

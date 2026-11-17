@@ -41,8 +41,11 @@ export type Turn = {
   signal: AbortSignal;
 };
 
-/** `reply` is the player's last text in the turn, logged as the decision's `plan`. */
-export type TurnMeta = CallMeta & { sessionId?: string; reply?: string };
+/**
+ * `reply` is the player's last text in the turn, logged as the decision's `plan`.
+ * `transcript` is the harness's raw output, for checks; it is not logged.
+ */
+export type TurnMeta = CallMeta & { sessionId?: string; reply?: string; transcript?: string };
 
 /** Plays a power for a whole game, one `turn` per phase. */
 export type Driver = { id: string; turn(t: Turn): Promise<TurnMeta> };
@@ -458,7 +461,8 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
       clearTimeout(timer);
       if (Date.now() < phase.deadline) await Promise.race([Promise.all(turns), sleep(EXIT_GRACE_MS)]);
       controller.abort();
-      await Promise.all(turns);
+      // A harness that ignores SIGTERM must not hold up the game.
+      await Promise.race([Promise.all(turns), sleep(EXIT_GRACE_MS)]);
 
       const orders: Partial<Record<Power, Order[]>> = {};
       const fallbacks: GamePhase["fallbacks"] = [];
@@ -476,7 +480,7 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
         rejectedMessages: phase.rejected,
         decisions: Object.fromEntries(
           active.map((p) => {
-            const { reply, ...meta } = metas[p] ?? {};
+            const { reply, transcript: _transcript, ...meta } = metas[p] ?? {};
             return [p, { ...meta, plan: reply, orders: phase.submitted.get(p) ?? [], toolCalls: phase.toolCalls.get(p) ?? 0 }];
           }),
         ),
