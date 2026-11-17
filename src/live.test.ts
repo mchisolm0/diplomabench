@@ -55,6 +55,22 @@ test("rounds mode holds messages until every power has called wait, and only rec
   expect(log.phases[0]?.decisions.ALPHA?.toolCalls).toBe(4);
 });
 
+test("a second wait from the same power is refused while the first is pending", async () => {
+  let second = "";
+  await playLiveGame(
+    seats({
+      ALPHA: script(async (t) => {
+        const first = t.call("wait");
+        second = await t.call("wait");
+        await first;
+        await t.call("end_turn");
+      }),
+    }),
+    { mode: "async", press: 1, maxPhases: 1 },
+  );
+  expect(second).toBe("Error: You are already waiting.");
+});
+
 test("async mode delivers at once and wakes the recipient", async () => {
   let reply = "";
   await playLiveGame(

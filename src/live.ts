@@ -299,6 +299,7 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
       inputSchema: { type: "object", properties: {} },
       run: async (_, p) => {
         guard(p);
+        if (phase.waiting.has(p)) throw new ToolError("You are already waiting.");
         if (!negotiationOpen()) return `Negotiation is ${press === 0 ? "off" : "closed for this phase"}. Submit orders and call end_turn.`;
         const round = phase.round;
         if (mode === "rounds" && !visibleUnread(p).length) {

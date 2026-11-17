@@ -76,11 +76,12 @@ const codex: Turner = (model, root) => {
       mkdirSync(home, { recursive: true });
       writeFileSync(
         join(home, "config.toml"),
-        `${readFileSync(CODEX_SETTINGS, "utf8")}
-model = ${JSON.stringify(model)}
+        // Root keys first: TOML puts keys after a [table] inside that table.
+        `model = ${JSON.stringify(model)}
 sandbox_mode = "read-only"
 approval_policy = "never"
 web_search = "disabled"
+${readFileSync(CODEX_SETTINGS, "utf8")}
 
 [mcp_servers.diplomabench]
 url = ${JSON.stringify(t.mcp.url)}

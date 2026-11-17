@@ -25,16 +25,20 @@ for (const spec of process.argv.slice(2)) {
   if (!HARNESSES.includes(harness)) throw new Error(`unknown harness in ${spec}`);
   const inner = harnessDriver(harness, spec.slice(spec.indexOf(":") + 1));
   let reply = "";
+  let error: string | undefined;
   const probe: Driver = {
     id: inner.id,
     turn: async (t) => {
       const meta = await inner.turn({ ...t, prompt: CHECK });
-      reply = meta.reply ?? `(no reply; error: ${meta.error})`;
+      reply = meta.reply ?? "";
+      error = meta.error;
       return meta;
     },
   };
   const seats = Object.fromEntries(POWERS.map((p) => [p, p === "ALPHA" ? probe : holdDriver])) as Record<Power, Driver>;
   await playLiveGame(seats, { maxPhases: 1, phaseSeconds: 240 });
-  console.log(`=== ${spec}: ${reply.includes(canary) ? "FAIL, read the canary file" : "pass, canary not read"}\n${reply.trim()}\n`);
+  const verdict = reply.includes(canary) ? "FAIL, read the canary file" : error || !reply.trim() ? `FAIL, no answer (${error ?? "empty reply"})` : "pass, canary not read";
+  if (verdict.startsWith("FAIL")) process.exitCode = 1;
+  console.log(`=== ${spec}: ${verdict}\n${reply.trim()}\n`);
 }
 rmSync(canaryFile);
