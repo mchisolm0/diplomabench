@@ -65,6 +65,8 @@ test("a seeded game starts at the probed phase with only that phase's messages u
     turn: async (t) => {
       inbox = await t.call("inbox");
       history = await t.call("history");
+      // Its own message lands after the inbox read and must not count as unread.
+      await t.call("send_message", { to: ["GAMMA"], text: "Hold DEL off." });
       await t.call("submit_orders", { orders: ["EMR - DMR"] });
       await t.call("end_turn");
       return {};
