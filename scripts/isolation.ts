@@ -46,7 +46,7 @@ const markers = [
 /** Files under the seat root containing the canary or a marker, as "file: marker". */
 function leaks(root: string): string[] {
   // readdirSync, not glob: glob skips dot-folders, where harnesses keep their data and logs.
-  return readdirSync(root, { recursive: true, encoding: "utf8" }).filter((f) => !f.split("/").includes(".git")).flatMap((f) => {
+  return readdirSync(root, { recursive: true, encoding: "utf8" }).flatMap((f) => {
     const path = join(root, f);
     // lstat: harnesses link their own binaries into the seat (Codex's arg0 shims), and those aren't seat output.
     if (!lstatSync(path).isFile()) return [];

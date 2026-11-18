@@ -2,7 +2,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { accessSync, constants, globSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { CLAUDE_SETTINGS } from "./agents.ts";
 import type { Driver, Turn, TurnMeta } from "./live.ts";
 
@@ -39,7 +39,7 @@ type Turner = (model: string, root: string) => Driver["turn"];
  */
 function findCli(name: string): string {
   for (const dir of (process.env.PATH ?? "").split(":")) {
-    const path = join(dir, name);
+    const path = resolve(dir, name);
     try {
       accessSync(path, constants.X_OK);
       if (basename(realpathSync(path)) !== "mise") return path;
@@ -233,7 +233,7 @@ function exec(cmd: string, args: string[], opts: { cwd: string; input: string; s
     // PWD too: some harnesses trust it over the real cwd and would load this repo's AGENTS.md.
     // No global or system git config: seats are git repos, and harnesses show the git user to the model.
     const git = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
-    const child = spawn(cmd, args, { cwd: opts.cwd, env: { ...inherited, PWD: opts.cwd, ...opts.env, ...git }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(cmd, args, { cwd: opts.cwd, env: { ...inherited, ...opts.env, PWD: opts.cwd, ...git }, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     const stop = () => {
