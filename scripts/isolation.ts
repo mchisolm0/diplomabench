@@ -46,8 +46,7 @@ const markers = [
 /** Files under the seat root containing the canary or a marker, as "file: marker". */
 function leaks(root: string): string[] {
   // readdirSync, not glob: glob skips dot-folders, where harnesses keep their data and logs.
-  // node_modules: OpenCode installs its plugin package into the seat config, and library code isn't seat output.
-  return readdirSync(root, { recursive: true, encoding: "utf8" }).filter((f) => !f.split("/").some((d) => d === ".git" || d === "node_modules")).flatMap((f) => {
+  return readdirSync(root, { recursive: true, encoding: "utf8" }).filter((f) => !f.split("/").includes(".git")).flatMap((f) => {
     const path = join(root, f);
     // lstat: harnesses link their own binaries into the seat (Codex's arg0 shims), and those aren't seat output.
     if (!lstatSync(path).isFile()) return [];

@@ -23,7 +23,8 @@ export const OPENCODE_SETTINGS = join(homedir(), ".config/diplomabench/opencode.
 
 /** `root` holds every seat file, including transcripts with private messages; it is mode 0700 and kept after the game. */
 export function harnessDriver(harness: HarnessName, model: string): Driver & { root: string } {
-  const root = mkdtempSync("/tmp/diplomabench-");
+  // /var/tmp, not /tmp: /tmp is often RAM-backed, and seat roots are kept after the game.
+  const root = mkdtempSync("/var/tmp/diplomabench-");
   const make = { "claude-code": claudeCode, codex, opencode }[harness];
   return { id: `${harness}/${model}`, turn: make(model, root), root };
 }
@@ -172,7 +173,11 @@ const opencode: Turner = (model, root) => {
       configured = true;
     }
     const args = ["run", "--pure", "--format", "json", "-m", model, ...(session ? ["--session", session] : [])];
-    const env = { ...keys, HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local/share"), XDG_STATE_HOME: join(home, ".local/state"), DIPLOMABENCH_TOKEN: t.mcp.token, OPENCODE_DISABLE_CLAUDE_CODE: "1", OPENCODE_DISABLE_PROJECT_CONFIG: "1" };
+    const env = { ...keys, HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local/share"), XDG_STATE_HOME: join(home, ".local/state"), DIPLOMABENCH_TOKEN: t.mcp.token, OPENCODE_DISABLE_CLAUDE_CODE: "1", OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+      // OpenCode npm-installs its plugin package into every config dir, about 170 MB per seat.
+      // A dead registry makes that background install fail at once; seats need no plugins.
+      npm_config_registry: "http://127.0.0.1:9/", npm_config_offline: "true",
+      OPENCODE_DISABLE_DEFAULT_PLUGINS: "1", OPENCODE_DISABLE_EXTERNAL_SKILLS: "1", OPENCODE_DISABLE_LSP_DOWNLOAD: "1", OPENCODE_DISABLE_AUTOUPDATE: "1" };
     const run = await exec(CLI.opencode, args, { cwd, input: t.prompt, signal: t.signal, env });
     const events = jsonLines(run.stdout);
     session ??= events.map((e) => e.sessionID).find((id): id is string => typeof id === "string");
