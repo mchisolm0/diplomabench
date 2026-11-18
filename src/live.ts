@@ -70,7 +70,7 @@ type Phase = {
   submitted: Map<Power, unknown[]>;
   done: Set<Power>;
   waiting: Map<Power, () => void>;
-  toolCalls: Map<Power, number>;
+  toolCalls: Map<Power, Record<string, number>>;
   rejected: number;
   deadline: number;
   closed: boolean;
@@ -404,7 +404,9 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
     (t): Tool<Power> => ({
       ...t,
       run: (args, p) => {
-        phase.toolCalls.set(p, (phase.toolCalls.get(p) ?? 0) + 1);
+        const used = phase.toolCalls.get(p) ?? {};
+        used[t.name] = (used[t.name] ?? 0) + 1;
+        phase.toolCalls.set(p, used);
         return t.run(args, p);
       },
     }),
@@ -499,7 +501,7 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
         decisions: Object.fromEntries(
           active.map((p) => {
             const { reply, transcript: _transcript, ...meta } = metas[p] ?? {};
-            return [p, { ...meta, plan: reply, orders: phase.submitted.get(p) ?? [], toolCalls: phase.toolCalls.get(p) ?? 0 }];
+            return [p, { ...meta, plan: reply, orders: phase.submitted.get(p) ?? [], ...toolUse(phase.toolCalls.get(p) ?? {}) }];
           }),
         ),
         talks: [],
@@ -527,6 +529,8 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
     return { first, text: [rulesText(map), "", intro, "", ...update].join("\n") };
   }
 }
+
+const toolUse = (tools: Record<string, number>) => ({ toolCalls: Object.values(tools).reduce((a, b) => a + b, 0), tools });
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref());
 

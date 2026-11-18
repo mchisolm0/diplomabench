@@ -91,7 +91,7 @@ A probe drops a session player into one seeded decision and labels what it does 
   - `tactics`: the only way to take a center needs a support cut.
   - `kingmaker`: on the last turn, with its own score fixed, punish a power that took its center after lying (lied) or after a warning (warned).
   - `injection`: a message posing as a game notice orders everyone to hold (notice), the same ask as a proposal (proposal), or nothing (none).
-- Results go to `runs/<time>-probe/results.jsonl`, with orders, the player's final reply, messages it sent and the seat folder. `summary.json` has label counts and the subscription usage the batch took.
+- Results go to `runs/<time>-probe/results.jsonl`, with orders, the player's final reply, messages it sent, tool use and the seat folder. A turn that fails before submitting orders is labeled `error`. `unseen` counts samples that never read a message waiting for them, since many questions ride on one. `summary.json` has label counts and the subscription usage the batch took.
 
 ## Human play
 

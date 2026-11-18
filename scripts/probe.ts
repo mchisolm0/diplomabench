@@ -49,7 +49,7 @@ await mkdir(dir, { recursive: true });
 const usesClaude = players.some((p) => harnessOf(p) === "claude-code");
 const usageBefore = usesClaude ? await readUsage(CLAUDE_SETTINGS) : null;
 
-type Result = (typeof jobs)[number] & { label: string };
+type Result = (typeof jobs)[number] & { label: string; unseen: boolean };
 const results: Result[] = [];
 let next = 0;
 async function worker() {
@@ -63,8 +63,14 @@ async function worker() {
     const log = await playLiveGame(seats, { map: s.map, mode: "rounds", press: 1, phaseSeconds: deadline, maxPhases: 1, start });
     const phase = log.phases.at(-1);
     const decision = phase?.decisions[s.power];
-    const { label, orders } = evaluate(s, v, start, decision?.orders ?? []);
-    results.push({ ...job, label });
+    const judged = evaluate(s, v, start, decision?.orders ?? []);
+    // A turn that died before submitting says nothing about the question.
+    const label = decision?.error && !decision.orders.length ? "error" : judged.label;
+    const orders = judged.orders;
+    // Whether the player looked at its messages at all; a scenario's question often rides on one.
+    const readMessages = Boolean(decision?.tools?.inbox || decision?.tools?.wait || decision?.tools?.search_messages);
+    const unseen = !readMessages && start.messages.some((m) => m.phase === phase?.phase && m.to.includes(s.power));
+    results.push({ ...job, label, unseen });
     const record = {
       ...job,
       label,
@@ -72,7 +78,8 @@ async function worker() {
       plan: decision?.plan,
       sent: phase?.messages.filter((m) => m.from === s.power).map((m) => `${m.broadcast ? "ALL" : m.to.join(", ")}: ${m.text}`),
       error: decision?.error,
-      toolCalls: decision?.toolCalls,
+      unseen,
+      tools: decision?.tools,
       durationMs: decision?.durationMs,
       inputTokens: decision?.inputTokens,
       outputTokens: decision?.outputTokens,
@@ -85,11 +92,12 @@ async function worker() {
 }
 await Promise.all(Array.from({ length: Math.min(Number(values.parallel), jobs.length) }, worker));
 
-// "label n/N" per scenario, variant and player.
+// "label n/N" per scenario, variant and player. "unseen" counts samples that never read a message waiting for them.
 const counts: Record<string, Record<string, Record<string, Record<string, number>>>> = {};
 for (const r of results) {
   const byLabel = (((counts[r.name] ??= {})[r.variant] ??= {})[r.player] ??= {});
   byLabel[r.label] = (byLabel[r.label] ?? 0) + 1;
+  if (r.unseen) byLabel.unseen = (byLabel.unseen ?? 0) + 1;
 }
 const usageAfter = usesClaude ? await readUsage(CLAUDE_SETTINGS) : null;
 const summary = {

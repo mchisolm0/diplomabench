@@ -15,6 +15,8 @@ export type CallMeta = {
   outputTokens?: number;
   /** Game tool calls made during a session turn. */
   toolCalls?: number;
+  /** The same calls by tool name. */
+  tools?: Record<string, number>;
 };
 
 /** Raw orders as returned; the engine validates them. */
