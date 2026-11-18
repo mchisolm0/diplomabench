@@ -427,8 +427,8 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
   const server = await serveMcp({ name: "diplomabench", tools: counted, caller: (t) => powerOf.get(t) });
 
   try {
-    const startedAt = log.phases.length;
-    while (!state.result && !(opts.maxPhases && log.phases.length - startedAt >= opts.maxPhases)) {
+    const seeded = log.phases.length;
+    while (!state.result && !(opts.maxPhases && log.phases.length - seeded >= opts.maxPhases)) {
       const current = state;
       active = POWERS.filter((p) => unitsOf(current, p).length > 0);
       phase = newPhase(phaseName(current), Date.now() + phaseMs);
