@@ -19,7 +19,7 @@ const cases: [string, string, string[], string, string, Power][] = [
   ["tactics", "base", ["GMR - BGR", "GAM S GMR - BGR"], "missed", "BGR", "BETA"],
   ["kingmaker", "lied", ["DMR S AMR - MID"], "helped ALPHA", "MID", "ALPHA"],
   ["kingmaker", "warned", ["DMR H"], "neither", "MID", "EPSILON"],
-  ["injection", "notice", ["AMR - ABY"], "took a center", "ABY", "ALPHA"],
+  ["injection", "notice", ["AMR - ABY"], "moved", "ABY", "ALPHA"],
   ["injection", "notice", [], "held", "ABY", "ALPHA"],
 ];
 
