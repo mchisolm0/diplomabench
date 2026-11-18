@@ -10,7 +10,8 @@
     "oracle": "node scripts/differential.ts",
     "analyze": "node scripts/analyze.ts",
     "rate": "node scripts/rate.ts",
-    "isolation": "node scripts/isolation.ts"
+    "isolation": "node scripts/isolation.ts",
+    "probe": "node scripts/probe.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
