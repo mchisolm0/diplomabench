@@ -32,13 +32,11 @@ export function harnessDriver(harness: HarnessName, model: string): Driver & { r
 type Turner = (model: string, root: string) => Driver["turn"];
 
 /**
- * Each harness CLI's path, found once with the user's HOME. A mise command
- * wrapper (a link to `mise`, as Omarchy installs for claude and codex) reads
- * its target from HOME's config, so under a seat HOME it would install and run
- * a fresh copy instead of the user's.
+ * The first `name` on PATH that isn't a mise command wrapper. A wrapper (a
+ * link to `mise`, as Omarchy installs for claude and codex) reads its target
+ * from HOME's config, so under a seat HOME it would install and run a fresh
+ * copy instead of the user's.
  */
-const CLI = { claude: findCli("claude"), codex: findCli("codex"), opencode: findCli("opencode") };
-
 function findCli(name: string): string {
   for (const dir of (process.env.PATH ?? "").split(":")) {
     const path = join(dir, name);
@@ -47,7 +45,7 @@ function findCli(name: string): string {
       if (basename(realpathSync(path)) !== "mise") return path;
     } catch {}
   }
-  return name;
+  throw new Error(`no ${name} on PATH outside mise wrappers`);
 }
 
 /**
@@ -69,7 +67,7 @@ const claudeCode: Turner = (model, root) => {
       // Resume whenever the session was saved, even by a turn stopped at the deadline.
       ...(globSync(`projects/*/${session}.jsonl`, { cwd: config }).length ? ["--resume", session] : ["--session-id", session]),
     ];
-    const run = await exec(CLI.claude, args, { cwd, input: t.prompt, signal: t.signal, env: { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1" } });
+    const run = await exec(findCli("claude"), args, { cwd, input: t.prompt, signal: t.signal, env: { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1" } });
     const out = parseJson<{ is_error?: boolean; result?: string; total_cost_usd?: number; usage?: Usage }>(run.stdout);
     return {
       ...meta(run, out?.is_error ? out.result : out || run.aborted ? undefined : "no JSON output"),
@@ -124,7 +122,7 @@ default_tools_approval_mode = "approve"
     const flags = ["--json", "--skip-git-repo-check", ...CODEX_DISABLED.flatMap((f) => ["--disable", f])];
     const args = thread ? ["exec", "resume", thread, ...flags, "-"] : ["exec", ...flags, "-"];
     const keys = namedEnv(readFileSync(CODEX_SETTINGS, "utf8"), /^\s*env_key\s*=\s*"([^"]+)"/gm);
-    const run = await exec(CLI.codex, args, { cwd, input: t.prompt, signal: t.signal, env: { ...keys, CODEX_HOME: home, HOME: userHome, DIPLOMABENCH_TOKEN: t.mcp.token } });
+    const run = await exec(findCli("codex"), args, { cwd, input: t.prompt, signal: t.signal, env: { ...keys, CODEX_HOME: home, HOME: userHome, DIPLOMABENCH_TOKEN: t.mcp.token } });
     const events = jsonLines(run.stdout);
     thread ??= events.find((e) => e.type === "thread.started")?.thread_id as string | undefined;
     const usage = events.findLast((e) => e.type === "turn.completed")?.usage as { input_tokens?: number; output_tokens?: number } | undefined;
@@ -178,7 +176,7 @@ const opencode: Turner = (model, root) => {
       // A dead registry makes that background install fail at once; seats need no plugins.
       npm_config_registry: "http://127.0.0.1:9/", npm_config_offline: "true",
       OPENCODE_DISABLE_DEFAULT_PLUGINS: "1", OPENCODE_DISABLE_EXTERNAL_SKILLS: "1", OPENCODE_DISABLE_LSP_DOWNLOAD: "1", OPENCODE_DISABLE_AUTOUPDATE: "1" };
-    const run = await exec(CLI.opencode, args, { cwd, input: t.prompt, signal: t.signal, env });
+    const run = await exec(findCli("opencode"), args, { cwd, input: t.prompt, signal: t.signal, env });
     const events = jsonLines(run.stdout);
     session ??= events.map((e) => e.sessionID).find((id): id is string => typeof id === "string");
     const tokens = events.flatMap((e) => {

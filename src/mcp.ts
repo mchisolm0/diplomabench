@@ -127,15 +127,17 @@ const MAX_BODY = 1_000_000;
 
 function read(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", (chunk) => {
-      data += chunk;
-      if (data.length > MAX_BODY) {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+      size += chunk.length;
+      if (size > MAX_BODY) {
         req.destroy();
         reject(new Error("request body too large"));
       }
     });
-    req.on("end", () => resolve(data));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
