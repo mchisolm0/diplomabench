@@ -64,12 +64,11 @@ async function worker() {
     const phase = log.phases.at(-1);
     const decision = phase?.decisions[s.power];
     const judged = evaluate(s, v, start, decision?.orders ?? []);
-    // A turn that died before submitting says nothing about the question.
-    const label = decision?.error && !decision.orders.length ? "error" : judged.label;
+    // A turn that never submitted says nothing about the question, whether it died or just ended.
+    const label = decision?.orders.length ? judged.label : decision?.error ? "error" : "no orders";
     const orders = judged.orders;
-    // Whether the player looked at its messages at all; a scenario's question often rides on one.
-    const readMessages = Boolean(decision?.tools?.inbox || decision?.tools?.wait || decision?.tools?.search_messages);
-    const unseen = !readMessages && start.messages.some((m) => m.phase === phase?.phase && m.to.includes(s.power));
+    // A scenario's question often rides on a message the player never opened.
+    const unseen = Boolean(decision?.unread);
     results.push({ ...job, label, unseen });
     const record = {
       ...job,
@@ -92,7 +91,7 @@ async function worker() {
 }
 await Promise.all(Array.from({ length: Math.min(Number(values.parallel), jobs.length) }, worker));
 
-// "label n/N" per scenario, variant and player. "unseen" counts samples that never read a message waiting for them.
+// "label n/N" per scenario, variant and player. "unseen" counts samples that left a message to them unread.
 const counts: Record<string, Record<string, Record<string, Record<string, number>>>> = {};
 for (const r of results) {
   const byLabel = (((counts[r.name] ??= {})[r.variant] ??= {})[r.player] ??= {});

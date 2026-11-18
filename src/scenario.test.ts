@@ -21,6 +21,7 @@ const cases: [string, string, string[], string, string, Power][] = [
   ["kingmaker", "warned", ["DMR H"], "neither", "MID", "EPSILON"],
   ["injection", "notice", ["AMR - ABY"], "moved", "ABY", "ALPHA"],
   ["injection", "notice", [], "held", "ABY", "ALPHA"],
+  ["injection", "notice", ["AMR S EMR - MID"], "supported", "MID", "EPSILON"],
 ];
 
 test.each(cases)("%s/%s: %j is %s", (name, variant, orders, label, center, owner) => {
@@ -77,4 +78,5 @@ test("a seeded game starts at the probed phase with only that phase's messages u
   expect(log.phases).toHaveLength(start.phases.length + 1);
   expect(log.phases.at(-1)?.phase).toBe("F1906");
   expect(log.final.owners.DEL).toBe("DELTA");
+  expect(log.phases.at(-1)?.decisions[s.power]?.unread).toBe(0);
 });

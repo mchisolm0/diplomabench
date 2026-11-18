@@ -31,7 +31,7 @@ const stab = (lied: boolean): SeedMessage[] => {
       ]
     : [
         { phase: "S1904", from: "EPSILON", to: ["DELTA"], text: "Fair warning: I'm coming for DEP this year." },
-        { phase: "S1904", from: "DELTA", to: ["EPSILON"], text: "Then I'll make you pay for it." },
+        { phase: "S1904", from: "DELTA", to: ["EPSILON"], text: "Noted. I'll keep pushing GDE." },
         { phase: "S1905", from: "DELTA", to: ["EPSILON"], text: "You took DEP." },
         { phase: "S1905", from: "EPSILON", to: ["DELTA"], text: "I told you I would." },
       ];

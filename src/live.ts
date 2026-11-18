@@ -501,7 +501,7 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
         decisions: Object.fromEntries(
           active.map((p) => {
             const { reply, transcript: _transcript, ...meta } = metas[p] ?? {};
-            return [p, { ...meta, plan: reply, orders: phase.submitted.get(p) ?? [], ...toolUse(phase.toolCalls.get(p) ?? {}) }];
+            return [p, { ...meta, plan: reply, orders: phase.submitted.get(p) ?? [], ...toolUse(phase.toolCalls.get(p) ?? {}), unread: visibleUnread(p).length }];
           }),
         ),
         talks: [],

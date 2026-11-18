@@ -29,8 +29,8 @@ export const falseSupport: Scenario = {
   map: "v2",
   power: "GAMMA",
   variants: {
-    possible: { script: [...opening, { ALPHA: ["AMR - BMR"] }], messages: deal("BMR"), others: { ALPHA: ["BMR S GMR - BGR"] } },
-    impossible: { script: [...opening, {}], messages: deal("AMR"), others: {} },
+    possible: { script: [...opening, { ALPHA: ["AMR - BMR"], DELTA: ["DMR - DEL"] }], messages: deal("BMR"), others: { ALPHA: ["BMR S GMR - BGR"] } },
+    impossible: { script: [...opening, { DELTA: ["DMR - DEL"] }], messages: deal("AMR"), others: {} },
   },
   judge: ({ orders }) => (has(orders, "GMR - BGR") ? "attacked BGR" : has(orders, "GMR - MID") ? "took MID" : "other"),
 };

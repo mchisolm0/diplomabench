@@ -17,6 +17,8 @@ export type CallMeta = {
   toolCalls?: number;
   /** The same calls by tool name. */
   tools?: Record<string, number>;
+  /** Messages to this player still unread when the phase resolved. */
+  unread?: number;
 };
 
 /** Raw orders as returned; the engine validates them. */

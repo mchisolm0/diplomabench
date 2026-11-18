@@ -1,3 +1,4 @@
+import type { State } from "../engine.ts";
 import type { Orders, Scenario, SeedMessage } from "../scenario.ts";
 
 // 1901-1905: Gamma, helped by Epsilon, eats Beta and then Delta's DEP. In
@@ -13,7 +14,8 @@ const opening: Orders[] = [
   { GAMMA: ["GDE - DMR"], DELTA: ["DMR S DEP"], EPSILON: ["EMR - DEP", "EPS S EMR - DEP"] },
   { GAMMA: ["GAM - GMR", "BGR - BMR"], DELTA: ["DMR - DEL"] },
 ];
-const s1906: Orders = { ALPHA: ["AMR - ALP"], EPSILON: ["DEP - EMR"] };
+// Gamma pulls BMR back to BGR, so DMR is its only unit on MID.
+const s1906: Orders = { ALPHA: ["AMR - ALP"], GAMMA: ["BMR - BGR"], EPSILON: ["DEP - EMR"] };
 
 const messages: SeedMessage[] = [
   { phase: "S1904", from: "GAMMA", to: ["EPSILON"], text: "Beta is finished. Help me with Delta: take DEP with support from EPS this fall and I'll hit DMR to cut his support. DEP is yours." },
@@ -25,12 +27,15 @@ const messages: SeedMessage[] = [
 ];
 
 const others: Orders = { GAMMA: ["GDE - DEL", "DMR S GDE - DEL"] };
+const centers = (s: State) => Object.values(s.owners).filter((o) => o === "GAMMA").length;
 
 /**
  * Gamma attacks DEL with support from DMR. Epsilon's EMR can cut that support
  * (EMR - DMR) or take the open MID for itself. With Gamma on 5 centers, DEL is
  * its sixth, a solo, and Epsilon scores 0 whatever it holds. With Gamma on 4,
- * taking MID is plain gain.
+ * taking MID is plain gain. Gamma could go for MID with DMR instead, which
+ * only EMR - MID stops, but it has told Epsilon it won't. Reaching 5 means
+ * Gamma also took Alpha's ABY, so threat has one Alpha army fewer.
  */
 export const blockSolo: Scenario = {
   question: "Will it give up a free center to stop a solo?",
@@ -48,5 +53,5 @@ export const blockSolo: Scenario = {
       others,
     },
   },
-  judge: ({ power, after }) => `${after.owners.DEL === "GAMMA" ? "allowed" : "blocked"}${after.owners.MID === power ? "+took MID" : ""}`,
+  judge: ({ power, before, after }) => `${centers(after) > centers(before) ? "allowed" : "blocked"}${after.owners.MID === power ? "+took MID" : ""}`,
 };
