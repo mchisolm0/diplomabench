@@ -1,8 +1,8 @@
 import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { globSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, constants, globSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { CLAUDE_SETTINGS } from "./agents.ts";
 import type { Driver, Turn, TurnMeta } from "./live.ts";
 
@@ -31,6 +31,25 @@ export function harnessDriver(harness: HarnessName, model: string): Driver & { r
 type Turner = (model: string, root: string) => Driver["turn"];
 
 /**
+ * Each harness CLI's path, found once with the user's HOME. A mise command
+ * wrapper (a link to `mise`, as Omarchy installs for claude and codex) reads
+ * its target from HOME's config, so under a seat HOME it would install and run
+ * a fresh copy instead of the user's.
+ */
+const CLI = { claude: findCli("claude"), codex: findCli("codex"), opencode: findCli("opencode") };
+
+function findCli(name: string): string {
+  for (const dir of (process.env.PATH ?? "").split(":")) {
+    const path = join(dir, name);
+    try {
+      accessSync(path, constants.X_OK);
+      if (basename(realpathSync(path)) !== "mise") return path;
+    } catch {}
+  }
+  return name;
+}
+
+/**
  * Claude Code: `--bare` skips CLAUDE.md, hooks and plugins; `--tools ""` removes
  * built-ins; a seat CLAUDE_CONFIG_DIR keeps sessions out of the user's history.
  */
@@ -49,7 +68,7 @@ const claudeCode: Turner = (model, root) => {
       // Resume whenever the session was saved, even by a turn stopped at the deadline.
       ...(globSync(`projects/*/${session}.jsonl`, { cwd: config }).length ? ["--resume", session] : ["--session-id", session]),
     ];
-    const run = await exec("claude", args, { cwd, input: t.prompt, signal: t.signal, env: { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1" } });
+    const run = await exec(CLI.claude, args, { cwd, input: t.prompt, signal: t.signal, env: { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1" } });
     const out = parseJson<{ is_error?: boolean; result?: string; total_cost_usd?: number; usage?: Usage }>(run.stdout);
     return {
       ...meta(run, out?.is_error ? out.result : out || run.aborted ? undefined : "no JSON output"),
@@ -103,8 +122,8 @@ default_tools_approval_mode = "approve"
     }
     const flags = ["--json", "--skip-git-repo-check", ...CODEX_DISABLED.flatMap((f) => ["--disable", f])];
     const args = thread ? ["exec", "resume", thread, ...flags, "-"] : ["exec", ...flags, "-"];
-    const keys = namedEnv(readFileSync(CODEX_SETTINGS, "utf8"), /env_key\s*=\s*"([^"]+)"/g);
-    const run = await exec("codex", args, { cwd, input: t.prompt, signal: t.signal, env: { ...keys, CODEX_HOME: home, HOME: userHome, DIPLOMABENCH_TOKEN: t.mcp.token } });
+    const keys = namedEnv(readFileSync(CODEX_SETTINGS, "utf8"), /^\s*env_key\s*=\s*"([^"]+)"/gm);
+    const run = await exec(CLI.codex, args, { cwd, input: t.prompt, signal: t.signal, env: { ...keys, CODEX_HOME: home, HOME: userHome, DIPLOMABENCH_TOKEN: t.mcp.token } });
     const events = jsonLines(run.stdout);
     thread ??= events.find((e) => e.type === "thread.started")?.thread_id as string | undefined;
     const usage = events.findLast((e) => e.type === "turn.completed")?.usage as { input_tokens?: number; output_tokens?: number } | undefined;
@@ -120,11 +139,15 @@ default_tools_approval_mode = "approve"
 };
 
 /**
- * OpenCode: a private server (`--standalone`) with HOME pointed at an empty
+ * OpenCode: its own local server (`run` without `--attach`), no external
+ * plugins (`--pure`), and HOME pointed at an empty
  * seat directory, so it loads only this config and the providers in
  * OPENCODE_SETTINGS. No login is linked in, so it can't fall back to paid keys.
  */
 const opencode: Turner = (model, root) => {
+  const { provider } = JSON.parse(readFileSync(OPENCODE_SETTINGS, "utf8")) as { provider?: unknown };
+  // Only the provider block reaches the seat, so only its variables do.
+  const keys = namedEnv(JSON.stringify(provider ?? {}), /\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g);
   let session: string | undefined;
   let configured = false;
   return async (t) => {
@@ -132,7 +155,6 @@ const opencode: Turner = (model, root) => {
     const home = join(root, t.power, "opencode-home");
     if (!configured) {
       mkdirSync(join(home, ".config/opencode"), { recursive: true });
-      const { provider } = JSON.parse(readFileSync(OPENCODE_SETTINGS, "utf8")) as { provider?: unknown };
       writeFileSync(
         join(home, ".config/opencode/opencode.json"),
         JSON.stringify({
@@ -149,10 +171,9 @@ const opencode: Turner = (model, root) => {
       );
       configured = true;
     }
-    const args = ["run", "--standalone", "--format", "json", "-m", model, ...(session ? ["--session", session] : [])];
-    const keys = namedEnv(readFileSync(OPENCODE_SETTINGS, "utf8"), /\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g);
+    const args = ["run", "--pure", "--format", "json", "-m", model, ...(session ? ["--session", session] : [])];
     const env = { ...keys, HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local/share"), XDG_STATE_HOME: join(home, ".local/state"), DIPLOMABENCH_TOKEN: t.mcp.token, OPENCODE_DISABLE_CLAUDE_CODE: "1", OPENCODE_DISABLE_PROJECT_CONFIG: "1" };
-    const run = await exec("opencode", args, { cwd, input: t.prompt, signal: t.signal, env });
+    const run = await exec(CLI.opencode, args, { cwd, input: t.prompt, signal: t.signal, env });
     const events = jsonLines(run.stdout);
     session ??= events.map((e) => e.sessionID).find((id): id is string => typeof id === "string");
     const tokens = events.flatMap((e) => {
@@ -209,7 +230,7 @@ function exec(cmd: string, args: string[], opts: { cwd: string; input: string; s
     // PWD too: some harnesses trust it over the real cwd and would load this repo's AGENTS.md.
     // No global or system git config: seats are git repos, and harnesses show the git user to the model.
     const git = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
-    const child = spawn(cmd, args, { cwd: opts.cwd, env: { ...inherited, ...git, PWD: opts.cwd, ...opts.env }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(cmd, args, { cwd: opts.cwd, env: { ...inherited, PWD: opts.cwd, ...opts.env, ...git }, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     const stop = () => {
