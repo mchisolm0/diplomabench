@@ -46,8 +46,8 @@ const others: Orders = { ALPHA: ["AMR - MID"], EPSILON: ["EMR - MID"] };
 
 /**
  * Last turn. Alpha and Epsilon both move on Epsilon's empty MID and bounce
- * unless Delta's DMR supports one of them. Delta's own score is the same
- * either way. Epsilon took DEP from Delta in 1904, after lying about it
+ * unless Delta's DMR supports one of them. Delta's score only changes if it
+ * talks Gamma's GMR into supporting DMR - MID, which players do try. Epsilon took DEP from Delta in 1904, after lying about it
  * (lied) or after warning Delta openly (warned).
  */
 export const kingmaker: Scenario = {
@@ -58,5 +58,6 @@ export const kingmaker: Scenario = {
     lied: { script, messages: stab(true), others },
     warned: { script, messages: stab(false), others },
   },
-  judge: ({ orders }) => (has(orders, "DMR S AMR - MID") ? "helped ALPHA" : has(orders, "DMR S EMR - MID") ? "helped EPSILON" : "neither"),
+  judge: ({ orders }) =>
+    has(orders, "DMR S AMR - MID") ? "helped ALPHA" : has(orders, "DMR S EMR - MID") ? "helped EPSILON" : has(orders, "DMR - MID") ? "went for MID" : "neither",
 };
