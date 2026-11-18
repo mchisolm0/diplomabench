@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>diplomabench watch</title>
+<style>
+:root {
+  --bg: #0e1013; --panel: #15181d; --line: #262a31; --text: #d8dce2; --dim: #8a919c; --faint: #5b626d;
+  --ALPHA: #ff6b6b; --BETA: #4dabf7; --GAMMA: #51cf66; --DELTA: #fcc419; --EPSILON: #cc5de8; --neutral: #3a3f47;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; }
+code, .mono { font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 12px; }
+header { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line); padding: 8px 16px; display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+header .phase { font-weight: 600; font-size: 15px; }
+header .centers span { margin-right: 10px; }
+header .ctl { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+button, select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 3px 8px; font: inherit; }
+button.on { border-color: var(--text); }
+#scrub { width: 100%; accent-color: var(--dim); margin: 0; }
+main { display: grid; grid-template-columns: minmax(300px, 460px) 1fr; gap: 0; border-bottom: 1px solid var(--line); }
+#board { padding: 8px 16px; border-right: 1px solid var(--line); }
+#board svg { width: 100%; height: auto; display: block; }
+#summary { color: var(--dim); font-size: 12px; min-height: 2.8em; }
+#messages { padding: 8px 16px; overflow-y: auto; max-height: 520px; }
+.msg { padding: 4px 0; border-bottom: 1px solid var(--line); }
+.msg .meta { color: var(--faint); font-size: 11px; }
+h3 { margin: 0 0 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+#powers { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.power { padding: 8px 12px; border-right: 1px solid var(--line); min-width: 0; }
+.power:last-child { border-right: 0; }
+.power .head { border-top: 3px solid; padding-top: 6px; display: flex; justify-content: space-between; gap: 8px; }
+.power .name { font-weight: 600; }
+.power .model { color: var(--dim); font-size: 12px; overflow-wrap: anywhere; }
+.status { font-size: 11px; color: var(--dim); white-space: nowrap; }
+.status.working { color: var(--text); }
+.status.error { color: var(--ALPHA); }
+.field { margin-top: 6px; overflow-wrap: anywhere; }
+.field .k { color: var(--faint); font-size: 11px; }
+.log { margin-top: 8px; max-height: 640px; overflow-y: auto; border-top: 1px solid var(--line); }
+.log > div { padding: 3px 0; border-bottom: 1px solid #1c1f25; overflow-wrap: anywhere; white-space: pre-wrap; }
+.log .thinking { color: var(--dim); font-style: italic; }
+.log .tool { color: #9fb3c8; }
+.log .result, .log details { color: var(--faint); }
+.log summary { cursor: pointer; list-style: none; }
+.log .divider { color: var(--faint); font-size: 11px; text-align: center; border-bottom: 0; padding-top: 8px; }
+.empty { color: var(--faint); }
+.banner { font-weight: 600; }
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; }
+  #board { border-right: 0; border-bottom: 1px solid var(--line); }
+  #powers { grid-template-columns: 1fr; }
+  .power { border-right: 0; border-bottom: 1px solid var(--line); }
+  header .ctl { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+<header>
+  <span class="phase" id="phase">Waiting for the game</span>
+  <span id="clock" class="mono"></span>
+  <span id="centers" class="centers mono"></span>
+  <span class="ctl">
+    <button id="play">Play</button>
+    <select id="speed" title="Replay speed"><option value="1">1x</option><option value="4">4x</option><option value="16" selected>16x</option><option value="64">64x</option></select>
+    <select id="jump" title="Jump to phase"></select>
+    <button id="live" title="Follow the game as it is played">Live</button>
+    <button id="testing" title="Show every player's thinking and tool calls">Testing</button>
+  </span>
+  <input id="scrub" type="range" min="0" max="0" value="0" aria-label="Event">
+</header>
+<main>
+  <section id="board"><svg id="svg" viewBox="-130 -125 260 250" role="img" aria-label="Board"></svg><div id="summary"></div></section>
+  <section id="messages"><h3>Messages</h3><div id="msgs"></div></section>
+</main>
+<section id="powers"></section>
+<!--EVENTS-->
+<script>
+const POWERS = ["ALPHA", "BETA", "GAMMA", "DELTA", "EPSILON"];
+const color = (p) => `var(--${p ?? "neutral"})`;
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const seasonName = (ph) => (ph ? `${ph[0] === "S" ? "Spring" : "Fall"} ${ph.slice(1)}` : "");
+const LOG_LIMIT = 400;
+
+// Every event so far, and how many of them the view shows.
+const events = [];
+let shown = 0;
+let follow = true;
+let playing = false;
+let testing = false;
+let view = fresh();
+
+function fresh() {
+  return { game: null, phase: "", open: false, state: null, deadline: 0, at: 0, messages: [], resolved: [], powers: {} };
+}
+
+function power(v, p) {
+  return (v.powers[p] ??= { status: "", orders: [], plan: "", error: "", log: [] });
+}
+
+function apply(v, e) {
+  v.at = e.at;
+  switch (e.kind) {
+    case "game":
+      v.game = e;
+      v.state = e.state;
+      v.messages = [...e.messages];
+      v.resolved = [...e.history];
+      break;
+    case "phase":
+      v.phase = e.phase;
+      v.open = true;
+      v.state = e.state;
+      v.deadline = e.deadline;
+      for (const p of POWERS) {
+        const s = power(v, p);
+        s.status = e.active.includes(p) ? "working" : "out";
+        s.orders = [];
+        s.plan = "";
+        s.error = "";
+        s.log.push({ divider: seasonName(e.phase) });
+      }
+      break;
+    case "tool": {
+      const s = power(v, e.power);
+      s.log.push(e);
+      const failed = e.result.startsWith("Error");
+      if (e.tool === "submit_orders" && !failed) s.orders = e.args.orders ?? [];
+      if (e.tool === "end_turn" && !failed) s.status = "ended";
+      else if (s.status !== "ended") s.status = e.tool === "wait" ? "waiting" : "working";
+      break;
+    }
+    case "message":
+      v.messages.push(e.message);
+      break;
+    case "trace":
+      power(v, e.power).log.push(e);
+      break;
+    case "turn": {
+      const s = power(v, e.power);
+      s.status = e.error ? "error" : "ended";
+      s.error = e.error ?? "";
+      s.plan = e.reply ?? "";
+      s.log.push({ turn: e });
+      break;
+    }
+    case "resolved":
+      v.open = false;
+      v.state = e.state;
+      v.resolved.push(e.record);
+      break;
+  }
+}
+
+function seek(n) {
+  n = Math.max(0, Math.min(n, events.length));
+  if (n < shown) {
+    view = fresh();
+    shown = 0;
+  }
+  while (shown < n) apply(view, events[shown++]);
+  schedule();
+}
+
+let frame = 0;
+function schedule() {
+  if (!frame) frame = requestAnimationFrame(() => ((frame = 0), render()));
+}
+
+// Board layout from the map itself: homes on a ring, each other province at the
+// mean angle of the homes it touches, pulled inward the fewer homes it touches.
+let layout = null;
+function place(map) {
+  const at = {};
+  const homes = new Set(Object.values(map.homes).flat());
+  POWERS.forEach((p, i) => {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / POWERS.length;
+    for (const h of map.homes[p]) at[h] = { x: 100 * Math.cos(a), y: 100 * Math.sin(a), a };
+  });
+  for (const id of map.provinces) {
+    if (at[id]) continue;
+    const near = map.adjacent[id].filter((n) => homes.has(n));
+    if (!near.length) { at[id] = { x: 0, y: 0 }; continue; }
+    const x = near.reduce((s, h) => s + Math.cos(at[h].a), 0);
+    const y = near.reduce((s, h) => s + Math.sin(at[h].a), 0);
+    const a = Math.atan2(y, x);
+    const r = near.length >= 2 ? 78 : 50;
+    at[id] = { x: r * Math.cos(a), y: r * Math.sin(a), a };
+  }
+  return at;
+}
+
+function parseOrder(text) {
+  const t = String(text).toUpperCase().replace(/->/g, "-").trim();
+  let m = t.match(/^(\w+)\s*-\s*(\w+)$/);
+  if (m) return { unit: m[1], action: "move", to: m[2] };
+  m = t.match(/^(\w+)\s+S\s+(\w+)\s*-\s*(\w+)$/);
+  if (m) return { unit: m[1], action: "support_move", target: m[2], to: m[3] };
+  m = t.match(/^(\w+)\s+S\s+(\w+)$/);
+  if (m) return { unit: m[1], action: "support_hold", target: m[2] };
+  return null;
+}
+
+function arrow(from, to, stroke, dashed, shrink = 14) {
+  const dx = to.x - from.x, dy = to.y - from.y, d = Math.hypot(dx, dy) || 1;
+  const x1 = from.x + (dx / d) * shrink, y1 = from.y + (dy / d) * shrink;
+  const x2 = to.x - (dx / d) * shrink, y2 = to.y - (dy / d) * shrink;
+  return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="2" ${dashed ? 'stroke-dasharray="3 3"' : ""} marker-end="url(#head)" style="color:${stroke}"/>`;
+}
+
+function renderBoard(v) {
+  const svg = document.getElementById("svg");
+  if (!v.game || !v.state) { svg.innerHTML = ""; return; }
+  const map = v.game.map;
+  layout ??= place(map);
+  const centers = new Set(map.centers);
+  const parts = ['<defs><marker id="head" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L8 4L0 8z" fill="context-stroke"/></marker></defs>'];
+  for (const id of map.provinces) {
+    for (const n of map.adjacent[id]) {
+      if (n < id) continue;
+      const a = layout[id], b = layout[n];
+      parts.push(`<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="var(--line)" stroke-width="1"/>`);
+    }
+  }
+  for (const id of map.provinces) {
+    const { x, y } = layout[id];
+    const owner = v.state.owners[id];
+    const r = centers.has(id) ? 13 : 10;
+    const home = Object.values(map.homes).some((h) => h.includes(id));
+    parts.push(`<circle cx="${x}" cy="${y}" r="${r}" fill="${owner ? color(owner) : "var(--panel)"}" fill-opacity="${owner ? 0.28 : 1}" stroke="${owner ? color(owner) : "var(--faint)"}" stroke-width="${home ? 2.5 : 1}" ${centers.has(id) ? "" : 'stroke-dasharray="2 2"'}><title>${esc(map.names[id])}</title></circle>`);
+    const unit = v.state.units[id];
+    if (unit) parts.push(`<circle cx="${x}" cy="${y}" r="6" fill="${color(unit)}"><title>${unit} army</title></circle>`);
+    parts.push(`<text x="${x}" y="${y + r + 9}" text-anchor="middle" font-size="8" fill="var(--dim)" class="mono">${id}</text>`);
+  }
+  // This phase's submitted orders, as players change them.
+  for (const p of POWERS) {
+    for (const raw of v.powers[p]?.orders ?? []) {
+      const o = parseOrder(raw);
+      if (!o || !layout[o.unit]) continue;
+      if (o.action === "move" && layout[o.to]) parts.push(arrow(layout[o.unit], layout[o.to], color(p), false));
+      if (o.action === "support_move" && layout[o.target] && layout[o.to]) {
+        const mid = { x: (layout[o.target].x + layout[o.to].x) / 2, y: (layout[o.target].y + layout[o.to].y) / 2 };
+        parts.push(arrow(layout[o.unit], mid, color(p), true, 10));
+      }
+      if (o.action === "support_hold" && layout[o.target]) parts.push(arrow(layout[o.unit], layout[o.target], color(p), true));
+    }
+  }
+  svg.innerHTML = parts.join("");
+  const last = v.resolved.at(-1);
+  const summary = [];
+  if (v.state.result) summary.push(`<div class="banner">${v.state.result.kind === "solo" ? `Solo: ${v.state.result.winners.join(", ")}` : `Game over (${esc(v.state.result.kind)}): ${v.state.result.winners.join(", ")}`}</div>`);
+  if (last) {
+    const moved = new Set(last.moved);
+    const lines = Object.entries(last.orders).flatMap(([p, os]) => os.filter((o) => o.action === "move").map((o) => `<span style="color:${color(p)}">${o.unit}-${o.to}</span>${moved.has(o.unit) ? "" : "✗"}`));
+    const lost = last.dislodged.map((d) => `${d.power} ${d.unit} destroyed`);
+    const built = last.builds.map((b) => `${b.power} builds ${b.unit}`);
+    summary.push(`<div><b>${seasonName(last.phase)}</b>: ${[...lines, ...lost, ...built].join(", ") || "everyone held"}</div>`);
+  }
+  document.getElementById("summary").innerHTML = summary.join("");
+}
+
+function renderMessages(v) {
+  const box = document.getElementById("msgs");
+  const pinned = box.parentElement.scrollTop + box.parentElement.clientHeight >= box.parentElement.scrollHeight - 20;
+  box.innerHTML = v.messages.length
+    ? v.messages.map((m) => `<div class="msg"><div class="meta">${m.phase}${m.round ? ` round ${m.round}` : ""}</div><b style="color:${color(m.from)}">${m.from}</b> → ${m.broadcast ? "ALL" : m.to.map((p) => `<span style="color:${color(p)}">${p}</span>`).join(", ")}<div>${esc(m.text)}</div></div>`).join("")
+    : '<div class="empty">No messages yet.</div>';
+  if (pinned) box.parentElement.scrollTop = box.parentElement.scrollHeight;
+}
+
+function logLine(e) {
+  if (e.divider) return `<div class="divider">${esc(e.divider)}</div>`;
+  if (e.turn) return `<div class="result">turn over${e.turn.durationMs ? ` after ${Math.round(e.turn.durationMs / 1000)}s` : ""}${e.turn.error ? `: ${esc(e.turn.error)}` : ""}</div>`;
+  if (e.kind === "tool") {
+    const args = Object.keys(e.args ?? {}).length ? JSON.stringify(e.args) : "";
+    return `<details><summary class="tool mono">${esc(e.tool)}${esc(args ? ` ${args}` : "")}</summary><div class="mono">${esc(e.result)}</div></details>`;
+  }
+  const item = e.item;
+  if (item.type === "thinking") return `<div class="thinking">${esc(item.text)}</div>`;
+  if (item.type === "text") return `<div>${esc(item.text)}</div>`;
+  if (item.type === "tool_call") return `<div class="tool mono">${esc(item.name ?? "tool")} ${esc(item.text)}</div>`;
+  return `<details><summary class="result mono">result</summary><div class="mono">${esc(item.text)}</div></details>`;
+}
+
+function renderPowers(v) {
+  const box = document.getElementById("powers");
+  const scroll = [...box.querySelectorAll(".log")].map((l) => ({ top: l.scrollTop, pinned: l.scrollTop + l.clientHeight >= l.scrollHeight - 20 }));
+  box.innerHTML = POWERS.map((p) => {
+    const s = v.powers[p] ?? { status: "", orders: [], plan: "", error: "", log: [] };
+    const centers = v.state ? Object.values(v.state.owners).filter((o) => o === p).length : 0;
+    return `<div class="power">
+      <div class="head" style="border-color:${color(p)}"><span class="name" style="color:${color(p)}">${p}</span><span class="status ${s.status}">${esc(s.status)}${centers ? ` · ${centers} center${centers === 1 ? "" : "s"}` : ""}</span></div>
+      <div class="model">${esc(v.game?.seats[p] ?? "")}</div>
+      <div class="field"><span class="k">Orders</span><div class="mono">${s.orders.length ? s.orders.map(esc).join("<br>") : '<span class="empty">none yet</span>'}</div></div>
+      ${s.error ? `<div class="field status error">${esc(s.error)}</div>` : ""}
+      ${s.plan && !testing ? `<div class="field"><span class="k">Said at end of turn</span><div>${esc(s.plan)}</div></div>` : ""}
+      ${testing ? `<div class="log">${s.log.slice(-LOG_LIMIT).map(logLine).join("") || '<div class="empty">Nothing yet.</div>'}</div>` : ""}
+    </div>`;
+  }).join("");
+  box.querySelectorAll(".log").forEach((l, i) => {
+    const was = scroll[i];
+    l.scrollTop = !was || was.pinned ? l.scrollHeight : was.top;
+  });
+}
+
+function render() {
+  const v = view;
+  document.getElementById("phase").textContent = v.phase ? `${seasonName(v.phase)} (${v.phase})` : v.game ? "Starting" : "Waiting for the game";
+  const now = follow && !window.EVENTS ? Date.now() : v.at;
+  const left = v.open ? Math.max(0, Math.round((v.deadline - now) / 1000)) : null;
+  document.getElementById("clock").textContent = left === null ? "" : `${left}s left`;
+  document.getElementById("centers").innerHTML = v.state ? POWERS.map((p) => `<span style="color:${color(p)}">${p[0]}${Object.values(v.state.owners).filter((o) => o === p).length}</span>`).join("") : "";
+  const scrub = document.getElementById("scrub");
+  scrub.max = String(events.length);
+  scrub.value = String(shown);
+  document.getElementById("play").textContent = playing ? "Pause" : "Play";
+  document.getElementById("live").classList.toggle("on", follow);
+  document.getElementById("testing").classList.toggle("on", testing);
+  const jump = document.getElementById("jump");
+  const starts = events.flatMap((e, i) => (e.kind === "phase" ? [[i, e.phase]] : []));
+  if (jump.options.length !== starts.length + 1) {
+    jump.innerHTML = '<option value="">Phase</option>' + starts.map(([i, ph]) => `<option value="${i}">${ph}</option>`).join("");
+  }
+  renderBoard(v);
+  renderMessages(v);
+  renderPowers(v);
+}
+
+// Replay: wait the real gap between events, divided by speed, never more than 1.5s.
+let timer = 0;
+function step() {
+  clearTimeout(timer);
+  if (!playing) return;
+  if (shown >= events.length) {
+    playing = false;
+    schedule();
+    return;
+  }
+  seek(shown + 1);
+  const next = events[shown];
+  const gap = next ? Math.min(1500, (next.at - events[shown - 1].at) / Number(document.getElementById("speed").value)) : 0;
+  timer = setTimeout(step, gap);
+}
+
+document.getElementById("play").onclick = () => {
+  follow = false;
+  playing = !playing;
+  if (playing && shown >= events.length) seek(0);
+  step();
+  schedule();
+};
+document.getElementById("live").onclick = () => {
+  follow = true;
+  playing = false;
+  seek(events.length);
+};
+document.getElementById("testing").onclick = () => {
+  testing = !testing;
+  try { localStorage.setItem("diplomabench-testing", testing ? "1" : ""); } catch {}
+  schedule();
+};
+document.getElementById("scrub").oninput = (e) => {
+  follow = false;
+  playing = false;
+  seek(Number(e.target.value));
+};
+document.getElementById("jump").onchange = (e) => {
+  if (e.target.value === "") return;
+  follow = false;
+  playing = false;
+  seek(Number(e.target.value) + 1);
+  e.target.value = "";
+};
+try { testing = localStorage.getItem("diplomabench-testing") === "1"; } catch {}
+const params = new URLSearchParams(location.search);
+if (params.has("testing")) testing = params.get("testing") !== "0";
+
+function receive(e) {
+  events.push(e);
+  if (follow) seek(events.length);
+  else schedule();
+}
+
+if (window.EVENTS) {
+  // A saved replay: start from the top and play.
+  follow = false;
+  events.push(...window.EVENTS);
+  playing = params.get("autoplay") !== "0";
+  if (params.has("speed")) document.getElementById("speed").value = params.get("speed");
+  seek(0);
+  step();
+} else {
+  const source = new EventSource("events");
+  source.onmessage = (m) => receive(JSON.parse(m.data));
+  setInterval(() => follow && schedule(), 1000);
+}
+</script>
+</body>
+</html>

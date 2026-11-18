@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { CLAUDE_SETTINGS } from "./agents.ts";
 import type { Driver, Turn, TurnMeta } from "./live.ts";
+import type { TraceItem } from "./spectate.ts";
 
 /**
  * Session players: one harness session per power for the whole game, resumed
@@ -62,13 +63,15 @@ const claudeCode: Turner = (model, root) => {
     const mcpFile = join(config, "mcp.json");
     writeFileSync(mcpFile, JSON.stringify({ mcpServers: { diplomabench: { type: "http", url: t.mcp.url, headers: { Authorization: `Bearer ${t.mcp.token}` } } } }), { mode: 0o600 });
     const args = [
-      "-p", "--bare", "--settings", CLAUDE_SETTINGS, "--model", model, "--output-format", "json",
+      "-p", "--bare", "--settings", CLAUDE_SETTINGS, "--model", model, "--output-format", "stream-json", "--verbose",
+      // Hidden flag (2.1.x): headless output otherwise carries empty thinking blocks.
+      "--thinking-display", "summarized",
       "--tools", "", "--mcp-config", mcpFile, "--strict-mcp-config", "--allowedTools", "mcp__diplomabench",
       // Resume whenever the session was saved, even by a turn stopped at the deadline.
       ...(globSync(`projects/*/${session}.jsonl`, { cwd: config }).length ? ["--resume", session] : ["--session-id", session]),
     ];
-    const run = await exec(findCli("claude"), args, { cwd, input: t.prompt, signal: t.signal, env: { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1" } });
-    const out = parseJson<{ is_error?: boolean; result?: string; total_cost_usd?: number; usage?: Usage }>(run.stdout);
+    const run = await exec(findCli("claude"), args, { cwd, input: t.prompt, signal: t.signal, env: { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: "1" }, onLine: tracer(t, claudeTrace()) });
+    const out = jsonLines(run.stdout).findLast((e) => e.type === "result") as { is_error?: boolean; result?: string; total_cost_usd?: number; usage?: Usage } | undefined;
     return {
       ...meta(run, out?.is_error ? out.result : out || run.aborted ? undefined : "no JSON output"),
       sessionId: session,
@@ -122,7 +125,7 @@ default_tools_approval_mode = "approve"
     const flags = ["--json", "--skip-git-repo-check", ...CODEX_DISABLED.flatMap((f) => ["--disable", f])];
     const args = thread ? ["exec", "resume", thread, ...flags, "-"] : ["exec", ...flags, "-"];
     const keys = namedEnv(readFileSync(CODEX_SETTINGS, "utf8"), /^\s*env_key\s*=\s*"([^"]+)"/gm);
-    const run = await exec(findCli("codex"), args, { cwd, input: t.prompt, signal: t.signal, env: { ...keys, CODEX_HOME: home, HOME: userHome, DIPLOMABENCH_TOKEN: t.mcp.token } });
+    const run = await exec(findCli("codex"), args, { cwd, input: t.prompt, signal: t.signal, env: { ...keys, CODEX_HOME: home, HOME: userHome, DIPLOMABENCH_TOKEN: t.mcp.token }, onLine: tracer(t, codexTrace) });
     const events = jsonLines(run.stdout);
     thread ??= events.find((e) => e.type === "thread.started")?.thread_id as string | undefined;
     const usage = events.findLast((e) => e.type === "turn.completed")?.usage as { input_tokens?: number; output_tokens?: number } | undefined;
@@ -176,7 +179,7 @@ const opencode: Turner = (model, root) => {
       // A dead registry makes that background install fail at once; seats need no plugins.
       npm_config_registry: "http://127.0.0.1:9/", npm_config_offline: "true",
       OPENCODE_DISABLE_DEFAULT_PLUGINS: "1", OPENCODE_DISABLE_EXTERNAL_SKILLS: "1", OPENCODE_DISABLE_LSP_DOWNLOAD: "1", OPENCODE_DISABLE_AUTOUPDATE: "1" };
-    const run = await exec(findCli("opencode"), args, { cwd, input: t.prompt, signal: t.signal, env });
+    const run = await exec(findCli("opencode"), args, { cwd, input: t.prompt, signal: t.signal, env, onLine: tracer(t, opencodeTrace) });
     const events = jsonLines(run.stdout);
     session ??= events.map((e) => e.sessionID).find((id): id is string => typeof id === "string");
     const tokens = events.flatMap((e) => {
@@ -196,6 +199,76 @@ const opencode: Turner = (model, root) => {
 
 type Usage = { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number; output_tokens?: number };
 const tokensIn = (u?: Usage) => (u ? (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : undefined);
+
+// Traces: each harness's JSON stream turned into thinking, text and tool steps.
+// Game tool calls are left out; the game records those itself, with results.
+
+type Event = Record<string, unknown>;
+const TRACE_CHARS = 4000;
+const clip = (text: string) => (text.length > TRACE_CHARS ? `${text.slice(0, TRACE_CHARS)}…` : text);
+const stringify = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v) ?? "");
+
+function tracer(t: Turn, parse: (e: Event) => TraceItem[]) {
+  return (line: string) => {
+    const e = parseJson<unknown>(line.trim());
+    if (typeof e === "object" && e !== null) for (const item of parse(e as Event)) t.trace(item);
+  };
+}
+
+/** Claude Code stream-json. Results name only their call's id, so game calls are remembered to skip their results. */
+function claudeTrace() {
+  const game = new Set<string>();
+  type Block = { type?: string; text?: string; thinking?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown };
+  return (e: Event): TraceItem[] => {
+    const blocks = ((e.message as { content?: Block[] } | undefined)?.content ?? []).filter((b) => typeof b === "object");
+    return blocks.flatMap((b): TraceItem[] => {
+      if (b.type === "thinking" && b.thinking) return [{ type: "thinking", text: b.thinking }];
+      if (b.type === "text" && b.text) return [{ type: "text", text: b.text }];
+      if (b.type === "tool_use") {
+        if (b.name?.startsWith("mcp__diplomabench__")) {
+          if (b.id) game.add(b.id);
+          return [];
+        }
+        return [{ type: "tool_call", name: b.name, text: clip(stringify(b.input)) }];
+      }
+      if (b.type === "tool_result" && !game.has(b.tool_use_id ?? "")) {
+        const parts = Array.isArray(b.content) ? b.content.map((c: { text?: string }) => c.text ?? "").join("\n") : stringify(b.content);
+        return [{ type: "tool_result", text: clip(parts) }];
+      }
+      return [];
+    });
+  };
+}
+
+/** Codex `exec --json`: finished items. Unknown item types come through whole, so new ones show up. */
+function codexTrace(e: Event): TraceItem[] {
+  if (e.type !== "item.completed") return [];
+  const item = e.item as { type?: string; text?: string; server?: string; tool?: string; arguments?: unknown; result?: unknown; error?: unknown; command?: string; aggregated_output?: string };
+  switch (item.type) {
+    case "reasoning":
+      return item.text ? [{ type: "thinking", text: item.text }] : [];
+    case "agent_message":
+      return item.text ? [{ type: "text", text: item.text }] : [];
+    case "mcp_tool_call":
+      if (item.server === "diplomabench") return [];
+      return [{ type: "tool_call", name: `${item.server}.${item.tool}`, text: clip(stringify(item.arguments)) }, { type: "tool_result", text: clip(stringify(item.result ?? item.error)) }];
+    case "command_execution":
+      return [{ type: "tool_call", name: "command", text: item.command ?? "" }, { type: "tool_result", text: clip(item.aggregated_output ?? "") }];
+    default:
+      return [{ type: "tool_call", name: item.type ?? "item", text: clip(stringify(item)) }];
+  }
+}
+
+/** OpenCode `run --format json`. */
+function opencodeTrace(e: Event): TraceItem[] {
+  const part = e.part as { text?: string; tool?: string; state?: { input?: unknown; output?: unknown; error?: unknown } } | undefined;
+  if (e.type === "text" && part?.text) return [{ type: "text", text: part.text }];
+  if (e.type === "reasoning" && part?.text) return [{ type: "thinking", text: part.text }];
+  if (e.type === "tool_use" && part?.tool && !part.tool.startsWith("diplomabench_")) {
+    return [{ type: "tool_call", name: part.tool, text: clip(stringify(part.state?.input)) }, { type: "tool_result", text: clip(stringify(part.state?.output ?? part.state?.error)) }];
+  }
+  return [];
+}
 
 /** An empty working directory per seat, stable across the game so sessions resume. */
 function seatDir(root: string, t: Turn): string {
@@ -225,7 +298,7 @@ const meta = (run: Run, error?: string): TurnMeta => ({
   error: run.aborted ? "stopped at the phase deadline" : error ?? (run.code === 0 ? undefined : `exited ${run.code}: ${(run.stderr || run.stdout).slice(-500)}`),
 });
 
-function exec(cmd: string, args: string[], opts: { cwd: string; input: string; signal: AbortSignal; env?: Record<string, string> }): Promise<Run> {
+function exec(cmd: string, args: string[], opts: { cwd: string; input: string; signal: AbortSignal; env?: Record<string, string>; onLine?: (line: string) => void }): Promise<Run> {
   const started = Date.now();
   return new Promise((resolve) => {
     // Only what a CLI needs to run; harness settings come from opts.env, never the parent session.
@@ -236,16 +309,23 @@ function exec(cmd: string, args: string[], opts: { cwd: string; input: string; s
     const child = spawn(cmd, args, { cwd: opts.cwd, env: { ...inherited, ...opts.env, PWD: opts.cwd, ...git }, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    let partial = "";
     const stop = () => {
       child.kill("SIGTERM");
       setTimeout(() => child.exitCode === null && child.signalCode === null && child.kill("SIGKILL"), 5000).unref();
     };
     opts.signal.addEventListener("abort", stop, { once: true });
-    child.stdout.on("data", (d) => (stdout += d));
+    child.stdout.on("data", (d: Buffer) => {
+      stdout += d;
+      const lines = (partial + d).split("\n");
+      partial = lines.pop() ?? "";
+      for (const line of lines) opts.onLine?.(line);
+    });
     child.stderr.on("data", (d) => (stderr += d));
     child.on("error", (e) => (stderr += String(e)));
     child.on("close", (code) => {
       opts.signal.removeEventListener("abort", stop);
+      if (partial) opts.onLine?.(partial);
       resolve({ stdout, stderr, code, aborted: opts.signal.aborted, durationMs: Date.now() - started });
     });
     child.stdin.end(opts.input);
