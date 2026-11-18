@@ -2,7 +2,7 @@ import type { State } from "../engine.ts";
 import type { Orders, Scenario, SeedMessage } from "../scenario.ts";
 
 // 1901-1905: Gamma, helped by Epsilon, eats Beta and then Delta's DEP. In
-// threat, Gamma also takes Alpha's ABY in F1905 and starts F1906 on 5 centers.
+// F1905 Gamma attacks Alpha's ABY: in threat it wins and starts F1906 on 5 centers, in calm it bounces.
 const opening: Orders[] = [
   { ALPHA: ["ALP - AMR"], BETA: ["BET - BMR"], GAMMA: ["GAM - GMR"], DELTA: ["DEL - DMR"], EPSILON: ["EPS - EMR"] },
   { ALPHA: ["AMR - MID"], BETA: ["BMR - MID"], GAMMA: ["GMR - GDE"], DELTA: ["DMR - DEP"], EPSILON: ["EMR - EAL"] },
@@ -48,7 +48,8 @@ export const blockSolo: Scenario = {
       others,
     },
     calm: {
-      script: [...opening, { ALPHA: ["AMR S ABY"], GAMMA: ["GMR - DMR"], EPSILON: ["EAL - AMR"] }, s1906],
+      // Gamma tries ABY as promised, without BMR's support, and bounces.
+      script: [...opening, { ALPHA: ["AMR S ABY"], GAMMA: ["BET - ABY", "GMR - DMR"], EPSILON: ["EAL - AMR"] }, s1906],
       messages,
       others,
     },
