@@ -122,11 +122,22 @@ export async function serveMcp<Caller>(opts: {
   };
 }
 
+/** Far above any real tool call; bodies are buffered before the token is checked. */
+const MAX_BODY = 1_000_000;
+
 function read(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", (chunk) => (data += chunk));
-    req.on("end", () => resolve(data));
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+      size += chunk.length;
+      if (size > MAX_BODY) {
+        req.destroy();
+        reject(new Error("request body too large"));
+      }
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
