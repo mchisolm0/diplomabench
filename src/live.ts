@@ -7,6 +7,7 @@ import { serveMcp, ToolError, type Tool } from "./mcp.ts";
 import { MAX_MESSAGES_PER_TURN, MAX_MESSAGE_CHARS, canSee, normalizeMessages, type Message } from "./press.ts";
 import { boardLines, describeMessage, describePhase, mapLines, rulesText } from "./prompt.ts";
 import type { Start } from "./scenario.ts";
+import type { Spectator, TraceItem } from "./spectate.ts";
 
 /** Bump whenever session prompts or tool text change. */
 export const SESSION_PROMPT_VERSION = "session-v1";
@@ -31,6 +32,8 @@ export type LiveOptions = {
   onPhase?: (log: GameLog) => void | Promise<void>;
   /** Join a game in progress (see `replay`). Messages from earlier phases count as read. */
   start?: Start;
+  /** Sees every event, private ones and player traces included (see `GameEvent`). */
+  spectator?: Spectator;
 };
 
 /** One phase of play for one power. Harnesses reach the tools at `mcp`; in-process bots use `call` and `state`. */
@@ -42,6 +45,8 @@ export type Turn = {
   state: State;
   mcp: { url: string; token: string };
   call(tool: string, args?: Record<string, unknown>): Promise<string>;
+  /** Reports the player's thinking, text and harness tool calls to spectators as they happen. */
+  trace(item: TraceItem): void;
   /** Aborts when the phase closes; drivers stop their process then. */
   signal: AbortSignal;
 };
@@ -105,6 +110,7 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
   const played = new Set<Power>();
   let active: Power[] = [];
   let phase: Phase = newPhase("", 0);
+  const watch: Spectator = opts.spectator ?? (() => {});
 
   function newPhase(name: string, deadline: number): Phase {
     return {
@@ -291,6 +297,7 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
           throw new ToolError("Recipients must be other surviving powers or ALL, and text must not be empty.");
         }
         phase.sent.set(p, count + 1);
+        watch({ kind: "message", message });
         if (mode === "rounds") {
           phase.pending.push(message);
           return `Queued for ${message.to.join(", ")}. It is delivered when round ${phase.round} closes.`;
@@ -403,11 +410,19 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
   const counted = tools.map(
     (t): Tool<Power> => ({
       ...t,
-      run: (args, p) => {
+      run: async (args, p) => {
         const used = phase.toolCalls.get(p) ?? {};
         used[t.name] = (used[t.name] ?? 0) + 1;
         phase.toolCalls.set(p, used);
-        return t.run(args, p);
+        const seen = (result: string) => watch({ kind: "tool", phase: phase.name, power: p, tool: t.name, args, result });
+        try {
+          const result = await t.run(args, p);
+          seen(result);
+          return result;
+        } catch (e) {
+          seen(`Error: ${e instanceof Error ? e.message : String(e)}`);
+          throw e;
+        }
       },
     }),
   );
@@ -427,6 +442,7 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
   let tokens = {} as Record<Power, string>;
   let powerOf = new Map<string, Power>();
   const server = await serveMcp({ name: "diplomabench", tools: counted, caller: (t) => powerOf.get(t) });
+  watch({ kind: "game", map, mode, press, seats: log.seats, state, history: log.phases, messages: delivered });
 
   try {
     const seeded = log.phases.length;
@@ -434,6 +450,7 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
       const current = state;
       active = POWERS.filter((p) => unitsOf(current, p).length > 0);
       phase = newPhase(phaseName(current), Date.now() + phaseMs);
+      watch({ kind: "phase", phase: phase.name, state: current, deadline: phase.deadline, active });
       const closed = new Promise<void>((resolve) => {
         closePhase = () => {
           if (phase.closed) return;
@@ -469,11 +486,13 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
             state: current,
             mcp: { url: server.url, token: tokens[p] },
             call: (name, args) => (phase === own ? call(p, name, args) : Promise.resolve("Error: This phase is over. End your turn now.")),
+            trace: (item) => watch({ kind: "trace", phase: own.name, power: p, item }),
             signal: controller.signal,
           });
         } catch (e) {
           metas[p] = { error: e instanceof Error ? e.message : String(e), durationMs: Date.now() - started };
         }
+        watch({ kind: "turn", phase: own.name, power: p, error: metas[p]?.error, durationMs: metas[p]?.durationMs, reply: metas[p]?.reply });
         if (phase === own && !own.done.has(p) && !own.closed) finish(p);
       });
       await closed;
@@ -493,7 +512,7 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
       }
       const next = adjudicate(current, orders);
       state = next.state;
-      log.phases.push({
+      const record: GamePhase = {
         ...next.record,
         fallbacks,
         messages: delivered.filter((m) => m.phase === phase.name),
@@ -505,8 +524,10 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
           }),
         ),
         talks: [],
-      });
+      };
+      log.phases.push(record);
       log.final = state;
+      watch({ kind: "resolved", record, state });
       await opts.onPhase?.(log);
     }
   } finally {

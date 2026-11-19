@@ -6,6 +6,7 @@
 // "<harness>:<model>" (one session for the whole game; see src/harness.ts).
 // Session seats can't share a game with one-call seats. --model fills every seat.
 // Mixed lineups rotate one seat per game, so run multiples of 5 for balance.
+// Session games also write game-NN.events.jsonl; `pnpm watch <out dir>` shows them live.
 import { mkdir, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { CLAUDE_SETTINGS, holdAgent, randomAgent, claudeCodeAgent, type Agent } from "./agents.ts";
@@ -14,6 +15,7 @@ import { playGame, type GameLog } from "./game.ts";
 import { HARNESSES, harnessDriver, type HarnessName } from "./harness.ts";
 import { holdDriver, playLiveGame, randomDriver, type Driver, type Mode } from "./live.ts";
 import { MAPS, MAP_IDS, POWERS, type MapId, type Power } from "./map.ts";
+import { fileSpectator } from "./spectate.ts";
 import { readUsage, usageDelta } from "./usage.ts";
 
 const { values } = parseArgs({
@@ -73,6 +75,7 @@ function driverFor(spec: string, seed: number): Driver {
 const label = `${map}-${live ? `${mode}-` : ""}${[...new Set(specs)].map((s) => s.replace(/[/:]/g, "_")).join("+")}${pressRounds ? `-press${pressRounds}` : ""}`;
 const dir = `${values.out}/${new Date().toISOString().replace(/[:.]/g, "-")}-${label}`;
 await mkdir(dir, { recursive: true });
+if (live) console.log(`watch: pnpm watch ${dir}`);
 
 // Subscription usage is only meaningful when Claude seats play.
 const usesClaude = specs.some((s) => s !== "hold" && s !== "random" && (!s.includes(":") || harnessOf(s) === "claude-code"));
@@ -93,7 +96,7 @@ async function worker() {
     const log = live
       ? await playLiveGame(
           Object.fromEntries(POWERS.map((p, i) => [p, driverFor(specs[(i + g) % POWERS.length] ?? "hold", seed + g * 10 + i)])) as Record<Power, Driver>,
-          { map, mode, press: pressRounds, phaseSeconds: deadline, maxPhases, onPhase },
+          { map, mode, press: pressRounds, phaseSeconds: deadline, maxPhases, onPhase, spectator: fileSpectator(file.replace(/\.json$/, ".events.jsonl")) },
         )
       : await playGame(seats, { map, pressRounds, onPhase });
     logs[g] = log;

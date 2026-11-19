@@ -11,7 +11,8 @@
     "analyze": "node scripts/analyze.ts",
     "rate": "node scripts/rate.ts",
     "isolation": "node scripts/isolation.ts",
-    "probe": "node scripts/probe.ts"
+    "probe": "node scripts/probe.ts",
+    "watch": "node scripts/watch.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
