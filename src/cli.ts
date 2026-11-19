@@ -1,12 +1,13 @@
 // Usage: node src/cli.ts [--model sonnet | --seats sonnet,opus,random,hold,haiku]
 //                        [--map v2] [--press 2] [--games 10] [--parallel 3] [--out runs]
 //        node src/cli.ts --seats claude-code:fable,codex:gpt-6.1-sol,opencode:opencode-go/kimi-k3,hold,random
-//                        [--mode rounds|async] [--press 3] [--deadline 600] [--phases 2]
+//                        [--mode rounds|async] [--press 3] [--deadline 600] [--phases 2] [--review]
 // A seat is "hold", "random", a Claude model name (one call per decision), or
 // "<harness>:<model>" (one session for the whole game; see src/harness.ts).
 // Session seats can't share a game with one-call seats. --model fills every seat.
 // Mixed lineups rotate one seat per game, so run multiples of 5 for balance.
 // Session games also write game-NN.events.jsonl; `pnpm watch <out dir>` shows them live.
+// --review: after the game, each session player debriefs and then ranks the others.
 import { mkdir, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { CLAUDE_SETTINGS, holdAgent, randomAgent, claudeCodeAgent, type Agent } from "./agents.ts";
@@ -31,6 +32,7 @@ const { values } = parseArgs({
     parallel: { type: "string", default: "1" },
     seed: { type: "string", default: "1" },
     out: { type: "string", default: "runs" },
+    review: { type: "boolean", default: false },
   },
 });
 
@@ -58,6 +60,7 @@ function positive(flag: string, value: string | undefined, max = Number.MAX_SAFE
 const deadline = positive("deadline", values.deadline, Math.floor((2 ** 31 - 1) / 1000));
 const maxPhases = positive("phases", values.phases);
 const mode = values.mode as Mode;
+if (values.review && !live) throw new Error("--review needs session seats (<harness>:<model>)");
 if (mode !== "rounds" && mode !== "async") throw new Error("--mode must be rounds or async");
 
 function agentFor(spec: string, seed: number): Agent {
@@ -96,10 +99,12 @@ async function worker() {
     const log = live
       ? await playLiveGame(
           Object.fromEntries(POWERS.map((p, i) => [p, driverFor(specs[(i + g) % POWERS.length] ?? "hold", seed + g * 10 + i)])) as Record<Power, Driver>,
-          { map, mode, press: pressRounds, phaseSeconds: deadline, maxPhases, onPhase, spectator: fileSpectator(file.replace(/\.json$/, ".events.jsonl")) },
+          { map, mode, press: pressRounds, phaseSeconds: deadline, maxPhases, onPhase, review: values.review, spectator: fileSpectator(file.replace(/\.json$/, ".events.jsonl")) },
         )
       : await playGame(seats, { map, pressRounds, onPhase });
     logs[g] = log;
+    // The log is saved after each phase; this also keeps what came after the last one (the review).
+    await writeFile(file, JSON.stringify(log, null, 2));
     const r = log.final.result;
     console.log(`game ${g + 1}: ${r ? `${r.kind} ${r.winners.join(", ")}` : "stopped"} after ${log.phases.length} phases  ${POWERS.map((p) => `${p[0]}${centerCount(log.final, p)}`).join(" ")}`);
   }
@@ -155,6 +160,11 @@ function summarize(logs: GameLog[]) {
         cost += call?.costUsd ?? 0;
         if (call?.error) errors++;
       }
+    }
+    for (const call of Object.values(log.review?.turns ?? {}).flatMap((t) => Object.values(t))) {
+      calls++;
+      cost += call.costUsd ?? 0;
+      if (call.error) errors++;
     }
   }
   for (const a of Object.values(byAgent)) {

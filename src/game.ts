@@ -1,5 +1,6 @@
 import type { Agent, Decision, Talk } from "./agents.ts";
 import { adjudicate, initialState, normalizeOrders, phaseName, type Order, type PhaseRecord } from "./engine.ts";
+import type { Review } from "./live.ts";
 import { POWERS, type MapId, type Power } from "./map.ts";
 import { canSee, normalizeMessages, type Message } from "./press.ts";
 import { PROMPT_VERSION, type View } from "./prompt.ts";
@@ -22,6 +23,8 @@ export type GameLog = {
   startedAt: string;
   phases: GamePhase[];
   final: ReturnType<typeof initialState>;
+  /** Session games played with `--review`. */
+  review?: Review;
 };
 
 /**

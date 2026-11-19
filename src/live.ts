@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { CallMeta } from "./agents.ts";
-import { adjudicate, formatOrder, initialState, legalOrders, normalizeOrders, phaseName, unitsOf, type Order, type State } from "./engine.ts";
+import { adjudicate, centerCount, formatOrder, initialState, legalOrders, normalizeOrders, phaseName, unitsOf, type Order, type State } from "./engine.ts";
 import type { GameLog, GamePhase } from "./game.ts";
 import { MAPS, POWERS, type MapId, type Power } from "./map.ts";
 import { serveMcp, ToolError, type Tool } from "./mcp.ts";
@@ -34,7 +34,35 @@ export type LiveOptions = {
   start?: Start;
   /** Sees every event, private ones and player traces included (see `GameEvent`). */
   spectator?: Spectator;
+  /** After the last phase, every player debriefs and then ranks the others (see `Review`). */
+  review?: boolean;
 };
+
+export const REVIEW_PROMPT_VERSION = "review-v1";
+
+/** A decision a player points to, and why. */
+export type Moment = { phase: string; why: string };
+/** A player's look back at its own game. */
+export type Debrief = { plan: string; best: Moment; worst: Moment };
+/** One place in a player's ranking of the others. */
+export type Rank = Moment & { power: Power };
+
+/**
+ * End-of-game feedback from every player in its own session. Each debriefs
+ * first, before anything new is revealed, so hindsight can't rewrite its own
+ * story. Then each reads every message and order and ranks the other powers,
+ * best first. Players see power names, never models.
+ */
+export type Review = {
+  promptVersion: string;
+  debriefs: Partial<Record<Power, Debrief>>;
+  ranks: Partial<Record<Power, Rank[]>>;
+  /** Each review turn's time, cost and errors, as phases keep them for play. */
+  turns: Partial<Record<"debrief" | "peers", Partial<Record<Power, Omit<TurnMeta, "reply" | "transcript">>>>>;
+};
+
+/** The game's phases, then the two review turns. A review turn's phase is its stage name. */
+type Stage = "play" | "debrief" | "peers";
 
 /** One phase of play for one power. Harnesses reach the tools at `mcp`; in-process bots use `call` and `state`. */
 export type Turn = {
@@ -110,6 +138,8 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
   const played = new Set<Power>();
   let active: Power[] = [];
   let phase: Phase = newPhase("", 0);
+  let stage: Stage = "play";
+  const review: Review = { promptVersion: REVIEW_PROMPT_VERSION, debriefs: {}, ranks: {}, turns: {} };
   const watch: Spectator = opts.spectator ?? (() => {});
 
   function newPhase(name: string, deadline: number): Phase {
@@ -407,8 +437,93 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
     },
   ];
 
-  const counted = tools.map(
-    (t): Tool<Power> => ({
+  const said = (v: unknown, field: string): string => {
+    if (typeof v !== "string" || !v.trim()) throw new ToolError(`${field} must not be empty.`);
+    return v.trim();
+  };
+  const phaseArg = (v: unknown, field: string): string => {
+    const name = typeof v === "string" ? v.trim().toUpperCase() : "";
+    if (!log.phases.some((r) => r.phase === name)) throw new ToolError(`${field} must be a phase of this game, ${log.phases[0]?.phase} to ${log.phases.at(-1)?.phase}.`);
+    return name;
+  };
+  const reviewed = () => watch({ kind: "review", stage: stage === "peers" ? "peers" : "debrief", review: structuredClone(review) });
+  const reviewTools: Tool<Power>[] = [
+    {
+      name: "submit_debrief",
+      description: "Your look back at your own game. Submitting again replaces it.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          plan: { type: "string", description: "What you were trying to do, and whether it worked. Two or three sentences." },
+          best: { type: "string", description: "Your best decision, and why." },
+          best_phase: { type: "string", description: "Its phase, e.g. F1903." },
+          worst: { type: "string", description: "Your worst decision, and why." },
+          worst_phase: { type: "string", description: "Its phase." },
+        },
+        required: ["plan", "best", "best_phase", "worst", "worst_phase"],
+      },
+      run: (args, p) => {
+        guard(p);
+        review.debriefs[p] = {
+          plan: said(args.plan, "plan"),
+          best: { phase: phaseArg(args.best_phase, "best_phase"), why: said(args.best, "best") },
+          worst: { phase: phaseArg(args.worst_phase, "worst_phase"), why: said(args.worst, "worst") },
+        };
+        reviewed();
+        return "Saved. Call end_turn.";
+      },
+    },
+    {
+      name: "submit_ranking",
+      description: "Rank every other power from best played to worst. Submitting again replaces it.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          ranking: {
+            type: "array",
+            description: "Best first, each other power once.",
+            items: {
+              type: "object",
+              properties: {
+                power: { type: "string" },
+                why: { type: "string", description: "One or two sentences." },
+                phase: { type: "string", description: "The phase that shows it best, e.g. F1903." },
+              },
+              required: ["power", "why", "phase"],
+            },
+          },
+        },
+        required: ["ranking"],
+      },
+      run: (args, p) => {
+        guard(p);
+        const others = POWERS.filter((q) => q !== p);
+        const ranks = (Array.isArray(args.ranking) ? args.ranking : []).map((entry: unknown, i): Rank => {
+          const r = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
+          const power = others.find((q) => q === String(r.power).trim().toUpperCase());
+          if (!power) throw new ToolError(`ranking[${i}].power must be one of ${others.join(", ")}.`);
+          return { power, why: said(r.why, `ranking[${i}].why`), phase: phaseArg(r.phase, `ranking[${i}].phase`) };
+        });
+        if (new Set(ranks.map((r) => r.power)).size !== others.length || ranks.length !== others.length) throw new ToolError(`ranking must list each of ${others.join(", ")} once, best first.`);
+        review.ranks[p] = ranks;
+        reviewed();
+        return "Saved. Call end_turn.";
+      },
+    },
+    {
+      name: "end_turn",
+      description: "Finish. Stop working after calling this.",
+      inputSchema: { type: "object", properties: {} },
+      run: (_, p) => {
+        guard(p);
+        finish(p);
+        return "Turn ended. Stop now.";
+      },
+    },
+  ];
+  const named = (from: Tool<Power>[], ...names: string[]) => from.filter((t) => names.includes(t.name));
+
+  const counting = (t: Tool<Power>): Tool<Power> => ({
       ...t,
       run: async (args, p) => {
         const used = phase.toolCalls.get(p) ?? {};
@@ -424,11 +539,15 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
           throw e;
         }
       },
-    }),
-  );
-  const byName = new Map(counted.map((t) => [t.name, t]));
+  });
+  // Review turns get only what they need: no orders, no messages to send.
+  const toolsFor: Record<Stage, Tool<Power>[]> = {
+    play: tools.map(counting),
+    debrief: [...named(tools, "history", "search_messages", "read_notes"), ...named(reviewTools, "submit_debrief", "end_turn")].map(counting),
+    peers: [...named(tools, "history"), ...named(reviewTools, "submit_ranking", "end_turn")].map(counting),
+  };
   const call = async (p: Power, name: string, args: Record<string, unknown> = {}) => {
-    const tool = byName.get(name);
+    const tool = toolsFor[stage].find((t) => t.name === name);
     if (!tool) throw new Error(`unknown tool ${name}`);
     try {
       return await tool.run(args, p);
@@ -441,67 +560,78 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
   // Tokens are issued per phase, so a process that outlives its turn is locked out of the next phase.
   let tokens = {} as Record<Power, string>;
   let powerOf = new Map<string, Power>();
-  const server = await serveMcp({ name: "diplomabench", tools: counted, caller: (t) => powerOf.get(t) });
+  const server = await serveMcp({ name: "diplomabench", tools: () => toolsFor[stage], caller: (t) => powerOf.get(t) });
   watch({ kind: "game", map, mode, press, seats: log.seats, state, history: log.phases, messages: delivered });
+
+  /** One turn for each of `players` at once, until all of them end it or the deadline passes. */
+  async function playTurns(name: string, players: Power[], deadline: number, current: State, promptFor: (p: Power) => { first: boolean; text: string }) {
+    active = players;
+    phase = newPhase(name, deadline);
+    const closed = new Promise<void>((resolve) => {
+      closePhase = () => {
+        if (phase.closed) return;
+        phase.closed = true;
+        delivered.push(...phase.pending);
+        phase.pending = [];
+        for (const p of [...phase.waiting.keys()]) wake(p);
+        resolve();
+      };
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      closePhase();
+    }, deadline - Date.now());
+    const controller = new AbortController();
+    const metas: Partial<Record<Power, TurnMeta>> = {};
+    tokens = Object.fromEntries(POWERS.map((p) => [p, randomBytes(16).toString("hex")])) as Record<Power, string>;
+    powerOf = new Map(POWERS.map((p) => [tokens[p], p]));
+    const exitGrace = opts.exitGraceMs ?? EXIT_GRACE_MS;
+    // A turn that outlives its phase must not touch the next one.
+    const own = phase;
+    const turns = players.map(async (p) => {
+      const started = Date.now();
+      const prompt = promptFor(p);
+      try {
+        metas[p] = await seats[p].turn({
+          power: p,
+          phase: name,
+          first: prompt.first,
+          prompt: prompt.text,
+          state: current,
+          mcp: { url: server.url, token: tokens[p] },
+          call: (tool, args) => (phase === own ? call(p, tool, args) : Promise.resolve("Error: This phase is over. End your turn now.")),
+          trace: (item) => watch({ kind: "trace", phase: name, power: p, item }),
+          signal: controller.signal,
+        });
+      } catch (e) {
+        metas[p] = { error: e instanceof Error ? e.message : String(e), durationMs: Date.now() - started };
+      }
+      watch({ kind: "turn", phase: name, power: p, error: metas[p]?.error, durationMs: metas[p]?.durationMs, reply: metas[p]?.reply });
+      if (phase === own && !own.done.has(p) && !own.closed) finish(p);
+    });
+    await closed;
+    clearTimeout(timer);
+    // Timers can fire a hair before Date.now() reaches the deadline, so track how the phase closed.
+    if (!timedOut) await Promise.race([Promise.all(turns), sleep(exitGrace)]);
+    controller.abort();
+    // A harness that ignores SIGTERM must not hold up the game.
+    await Promise.race([Promise.all(turns), sleep(exitGrace)]);
+    return metas;
+  }
 
   try {
     const seeded = log.phases.length;
     while (!state.result && !(opts.maxPhases && log.phases.length - seeded >= opts.maxPhases)) {
       const current = state;
-      active = POWERS.filter((p) => unitsOf(current, p).length > 0);
-      phase = newPhase(phaseName(current), Date.now() + phaseMs);
-      watch({ kind: "phase", phase: phase.name, state: current, deadline: phase.deadline, active });
-      const closed = new Promise<void>((resolve) => {
-        closePhase = () => {
-          if (phase.closed) return;
-          phase.closed = true;
-          delivered.push(...phase.pending);
-          phase.pending = [];
-          for (const p of [...phase.waiting.keys()]) wake(p);
-          resolve();
-        };
-      });
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        closePhase();
-      }, phaseMs);
-      const controller = new AbortController();
-      const metas: Partial<Record<Power, TurnMeta>> = {};
-      tokens = Object.fromEntries(POWERS.map((p) => [p, randomBytes(16).toString("hex")])) as Record<Power, string>;
-      powerOf = new Map(POWERS.map((p) => [tokens[p], p]));
-      const exitGrace = opts.exitGraceMs ?? EXIT_GRACE_MS;
-      // A turn that outlives its phase must not touch the next one.
-      const own = phase;
-      const turns = active.map(async (p) => {
-        const started = Date.now();
+      const players = POWERS.filter((p) => unitsOf(current, p).length > 0);
+      const deadline = Date.now() + phaseMs;
+      watch({ kind: "phase", phase: phaseName(current), state: current, deadline, active: players });
+      const metas = await playTurns(phaseName(current), players, deadline, current, (p) => {
         const prompt = turnPrompt(p, !played.has(p));
         played.add(p);
-        try {
-          metas[p] = await seats[p].turn({
-            power: p,
-            phase: phase.name,
-            first: prompt.first,
-            prompt: prompt.text,
-            state: current,
-            mcp: { url: server.url, token: tokens[p] },
-            call: (name, args) => (phase === own ? call(p, name, args) : Promise.resolve("Error: This phase is over. End your turn now.")),
-            trace: (item) => watch({ kind: "trace", phase: own.name, power: p, item }),
-            signal: controller.signal,
-          });
-        } catch (e) {
-          metas[p] = { error: e instanceof Error ? e.message : String(e), durationMs: Date.now() - started };
-        }
-        watch({ kind: "turn", phase: own.name, power: p, error: metas[p]?.error, durationMs: metas[p]?.durationMs, reply: metas[p]?.reply });
-        if (phase === own && !own.done.has(p) && !own.closed) finish(p);
+        return prompt;
       });
-      await closed;
-      clearTimeout(timer);
-      // Timers can fire a hair before Date.now() reaches the deadline, so track how the phase closed.
-      if (!timedOut) await Promise.race([Promise.all(turns), sleep(exitGrace)]);
-      controller.abort();
-      // A harness that ignores SIGTERM must not hold up the game.
-      await Promise.race([Promise.all(turns), sleep(exitGrace)]);
 
       const orders: Partial<Record<Power, Order[]>> = {};
       const fallbacks: GamePhase["fallbacks"] = [];
@@ -530,10 +660,49 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
       watch({ kind: "resolved", record, state });
       await opts.onPhase?.(log);
     }
+
+    // Everyone who played reviews, eliminated players too: their view of the game counts.
+    // Baseline seats have no session to ask; the others still rank them.
+    const reviewers = POWERS.filter((p) => played.has(p) && !seats[p].id.startsWith("baseline/"));
+    if (opts.review && log.phases.length && reviewers.length) {
+      for (const turn of ["debrief", "peers"] as const) {
+        stage = turn;
+        reviewed();
+        const metas = await playTurns(turn, reviewers, Date.now() + phaseMs, state, (p) => ({ first: false, text: turn === "debrief" ? debriefPrompt() : peersPrompt(p) }));
+        review.turns[turn] = Object.fromEntries(Object.entries(metas).map(([p, { reply: _reply, transcript: _transcript, ...meta }]) => [p, meta]));
+        reviewed();
+      }
+      log.review = review;
+    }
   } finally {
     await server.close();
   }
   return log;
+
+  function debriefPrompt(): string {
+    const r = state.result;
+    const how = r?.kind === "solo" ? `${r.winners[0]} won alone` : r ? "it reached the year limit" : `it was stopped after ${log.phases.at(-1)?.phase}`;
+    return [
+      `The game is over: ${how}. Final centers: ${POWERS.map((p) => `${p} ${centerCount(state, p)}`).join(", ")}.`,
+      "Before anything else is revealed, look back on your own play. Call submit_debrief with what you were trying to do and whether it worked, then your best and your worst decision, each with its phase. Be candid; it does not change your score. history, search_messages and read_notes still work. Then call end_turn.",
+    ].join("\n");
+  }
+
+  function peersPrompt(p: Power): string {
+    const others = POWERS.filter((q) => q !== p);
+    const line = (m: Message) => `${m.phase}${m.round ? ` round ${m.round}` : ""}, ${m.from} to ${m.broadcast ? "ALL" : m.to.join(", ")}: ${m.text}`;
+    return [
+      "Now judge the other players. Below is every message sent this game, private ones included, then every phase's orders and results.",
+      "",
+      "Messages:",
+      ...(delivered.length ? delivered.map(line) : ["(none)"]),
+      "",
+      "Orders and results:",
+      ...log.phases.map(describePhase),
+      "",
+      `Rank ${others.join(", ")} from best played to worst with submit_ranking. For each, say in one or two sentences why, and name the phase that shows it best. Judge how well they played and whether they kept their word. Then call end_turn.`,
+    ].join("\n");
+  }
 
   function turnPrompt(p: Power, first: boolean): { first: boolean; text: string } {
     const season = state.season === "S" ? "Spring" : "Fall";

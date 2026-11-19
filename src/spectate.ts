@@ -2,7 +2,7 @@ import { appendFileSync } from "node:fs";
 import type { State } from "./engine.ts";
 import type { GamePhase } from "./game.ts";
 import type { GameMap, Power } from "./map.ts";
-import type { Mode } from "./live.ts";
+import type { Mode, Review } from "./live.ts";
 import type { Message } from "./press.ts";
 
 /** One step of a player's own reasoning, as its harness reports it. */
@@ -22,6 +22,8 @@ export type GameEvent = { at: number } & (
   | { kind: "trace"; phase: string; power: Power; item: TraceItem }
   | { kind: "turn"; phase: string; power: Power; error?: string; durationMs?: number; reply?: string }
   | { kind: "resolved"; record: GamePhase; state: State }
+  /** Sent when each review turn starts and after each submission, with everything submitted so far. */
+  | { kind: "review"; stage: "debrief" | "peers"; review: Review }
 );
 
 /** Distributes `Omit` over the union, so each event keeps its own fields. */

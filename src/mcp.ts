@@ -23,12 +23,11 @@ const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05
  */
 export async function serveMcp<Caller>(opts: {
   name: string;
-  tools: readonly Tool<Caller>[];
+  /** Read on every request, so the list can change between turns. */
+  tools(): readonly Tool<Caller>[];
   caller(token: string): Caller | undefined;
   instructions?: string;
 }): Promise<{ url: string; close(): Promise<void> }> {
-  const byName = new Map(opts.tools.map((t) => [t.name, t]));
-
   async function handle(msg: Rpc, caller: Caller): Promise<unknown> {
     switch (msg.method) {
       case "initialize": {
@@ -43,9 +42,9 @@ export async function serveMcp<Caller>(opts: {
       case "ping":
         return {};
       case "tools/list":
-        return { tools: opts.tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) };
+        return { tools: opts.tools().map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) };
       case "tools/call": {
-        const tool = byName.get(String(msg.params?.name));
+        const tool = opts.tools().find((t) => t.name === msg.params?.name);
         if (!tool) throw Object.assign(new Error(`unknown tool ${String(msg.params?.name)}`), { code: -32602 });
         const args = (msg.params?.arguments ?? {}) as Record<string, unknown>;
         try {
