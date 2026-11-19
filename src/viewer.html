@@ -86,6 +86,22 @@ svg { display: block; width: 100%; height: auto; }
 .trace .quiet { color: var(--faint); }
 .trace .error { color: var(--ALPHA); }
 
+/* Review */
+.grid { border-collapse: collapse; margin: 4px 0 20px; }
+.grid th { font-weight: 400; color: var(--faint); text-align: right; padding: 0 0 6px 14px; white-space: nowrap; }
+.grid td { padding: 6px 0 6px 14px; border-top: 1px solid var(--rule); text-align: right; }
+.grid td:first-child, .grid th:first-child { text-align: left; padding-left: 10px; }
+.grid td:first-child { font-weight: 600; box-shadow: inset 3px 0 0 var(--c); }
+.grid .avg { font: 400 18px/1 var(--serif); }
+.grid .self { color: var(--faint); }
+.judged { padding: 14px 0 6px; border-top: 1px solid var(--rule); max-width: 80ch; }
+.judged h3 { margin: 0; font: 400 18px/1.3 var(--serif); color: var(--c); }
+.judged h3 span { font: 13px var(--sans); color: var(--faint); margin-left: 8px; }
+.judged .plan { margin: 6px 0 8px; font: 15px/1.55 var(--serif); color: #d3d8df; }
+.judged .line { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 4px 0; }
+.judged .k { color: var(--dim); }
+.ph { padding: 0 3px; color: var(--dim); text-decoration: underline dotted; text-underline-offset: 3px; }
+
 @media (min-width: 901px) {
   /* Each column scrolls on its own, so the map stays in view while messages run. */
   main { height: calc(100vh - var(--head, 90px)); }
@@ -100,6 +116,7 @@ svg { display: block; width: 100%; height: auto; }
   .left, .right { padding: 14px 16px; }
   .transport { margin-left: 0; width: 100%; }
   .ledger .model { display: none; }
+  .grid .rater { display: none; }
 }
 @media (prefers-reduced-motion: no-preference) { .tok { transition: transform .35s ease; } }
 </style>
@@ -147,7 +164,15 @@ const replay = Boolean(window.EVENTS);
 
 // The game as events describe it: one entry per phase, with its messages,
 // each player's log (game tools, harness trace, turn end) and its resolution.
-const G = { map: null, seats: {}, phases: [], last: 0 };
+const G = { map: null, seats: {}, phases: [], last: 0, review: null, stage: "", final: null };
+// After a finished game, or once players review it, a last page shows the final board and their review.
+const REVIEW = new Set(["debrief", "peers"]);
+function finalPage(at) {
+  const state = G.phases.at(-1)?.after;
+  if (!G.final && state) G.phases.push((G.final = { phase: "review", before: state, after: state, start: at, msgs: [], log: {}, turns: {}, submitted: {}, record: null, end: at }));
+  return G.final;
+}
+const phaseOf = (name, at) => (REVIEW.has(name) ? finalPage(at) : G.phases.find((q) => q.phase === name));
 let cells = null, at = null, centers = null, homeOf = null;
 
 function ingest(e) {
@@ -167,7 +192,7 @@ function ingest(e) {
       cur?.msgs.push({ ...e.message, at: e.at });
       break;
     case "tool": {
-      const p = G.phases.find((q) => q.phase === e.phase);
+      const p = phaseOf(e.phase, e.at);
       if (!p) break;
       logOf(p, e.power).push({ at: e.at, t: "game", name: e.tool, args: e.args, result: e.result });
       // The game's reply names the orders as it will play them ("Recorded: ALP - ABY, BET H."), not as typed.
@@ -178,12 +203,12 @@ function ingest(e) {
       break;
     }
     case "trace": {
-      const p = G.phases.find((q) => q.phase === e.phase);
+      const p = phaseOf(e.phase, e.at);
       if (p) logOf(p, e.power).push({ at: e.at, t: e.item.type, name: e.item.name, text: e.item.text });
       break;
     }
     case "turn": {
-      const p = G.phases.find((q) => q.phase === e.phase);
+      const p = phaseOf(e.phase, e.at);
       if (!p) break;
       p.turns[e.power] = e;
       logOf(p, e.power).push({ at: e.at, t: "turn", ...e });
@@ -194,6 +219,12 @@ function ingest(e) {
       cur.record = e.record;
       cur.after = e.state;
       cur.end = e.at;
+      if (e.state.result) finalPage(e.at);
+      break;
+    case "review":
+      G.review = e.review;
+      G.stage = e.stage;
+      finalPage(e.at);
       break;
   }
 }
@@ -225,13 +256,14 @@ function layout(map) {
 
 // Replay position: a phase and a change inside it (opens, each message, orders, resolution).
 function steps(p) {
+  if (p === G.final) return [{ k: "review", at: p.start }];
   return [{ k: "open", at: p.start }, ...p.msgs.map((m, i) => ({ k: "msg", i, at: m.at })), { k: "orders", at: p.record ? Math.max(p.ordered ?? p.end, p.msgs.at(-1)?.at ?? 0) : Infinity }, ...(p.record ? [{ k: "resolved", at: p.end }] : [])];
 }
 let pi = 0, si = 0, follow = !replay, seat = POWERS[0], testing = false, filter = null, playing = false, real = false, timer = 0;
 const ph = () => G.phases[pi];
 const st = () => steps(ph())[si];
 const atEnd = () => pi === G.phases.length - 1 && si === steps(ph()).length - 1;
-const timeOf = () => (follow ? Infinity : st().at);
+const timeOf = () => (follow || st().k === "review" ? Infinity : st().at);
 
 const parseOrder = (text) => {
   const t = String(text).toUpperCase().replace(/->/g, "-").trim();
@@ -257,7 +289,7 @@ function arrow(a, b, pw, { support, failed } = {}) {
 }
 
 /** The board to draw: before the phase, or after it once resolved. */
-const board = () => (st().k === "resolved" ? ph().after : ph().before);
+const board = () => (st().k === "open" || st().k === "msg" || st().k === "orders" ? ph().before : ph().after);
 
 function renderMap() {
   const p = ph(), k = st().k, resolved = k === "resolved", s = board(), map = G.map;
@@ -293,6 +325,10 @@ function renderMap() {
 
 function outcome() {
   const p = ph(), k = st().k, r = p.record;
+  if (k === "review") {
+    const result = p.after.result;
+    return result?.kind === "solo" ? `${nice(result.winners[0])} won alone.` : result ? `The game ended at the year limit.` : `The game stopped after ${G.phases.at(-2).phase}.`;
+  }
   if (k === "open") return `${Object.keys(p.before.units).length} armies on the board.`;
   if (k === "msg") return `Negotiating. ${si} of ${p.msgs.length} messages sent.`;
   if (k === "orders") return r ? "Orders are in." : `Orders so far from ${list(Object.keys(p.submitted).map(nice)) || "nobody"}.`;
@@ -312,14 +348,14 @@ function outcome() {
 
 function renderLedger() {
   const s = board(), total = G.map.centers.length;
-  const upto = G.phases.slice(0, st().k === "resolved" ? pi + 1 : pi).filter((q) => q.after);
+  const upto = G.phases.slice(0, st().k === "resolved" ? pi + 1 : pi).filter((q) => q.after && q !== G.final);
   document.getElementById("ledger").innerHTML = POWERS.map((pw) => {
     const n = count(s.owners, pw);
     // A power with no armies is out, though centers it still holds keep counting.
     const alive = Object.values(s.units).includes(pw);
     const outAt = upto.find((q) => !Object.values(q.after.units).includes(pw));
     const hist = [count(G.phases[0].before.owners, pw), ...upto.map((q) => count(q.after.owners, pw))];
-    const pts = hist.map((v, i) => `${(i / Math.max(1, G.phases.length)) * 80},${21 - (v / total) * 20}`).join(" ");
+    const pts = hist.map((v, i) => `${(i / Math.max(1, G.phases.length - (G.final ? 1 : 0))) * 80},${21 - (v / total) * 20}`).join(" ");
     return `<tr class="${alive ? "" : "out"} ${pw === seat && testing ? "sel" : ""}" data-seat="${pw}" style="--c:${C(pw)}">
       <td class="name">${nice(pw)}</td><td class="model">${esc(G.seats[pw])}</td>
       <td class="n">${alive ? n : `out in ${outAt ? outAt.phase.slice(1) : ""}${n ? `, ${n} ${n === 1 ? "center" : "centers"}` : ""}`}</td>
@@ -369,15 +405,42 @@ function renderInspector() {
     ${log.length ? `<div class="trace">${traceRows(log, p.start)}</div>` : `<div class="more">Nothing yet this phase.</div>`}`;
 }
 
+const ordinal = (n) => `${n}${["st", "nd", "rd"][n - 1] ?? "th"}`;
+const phaseLink = (ph) => (G.phases.some((q) => q.phase === ph) ? `<button class="ph" data-go="${esc(ph)}">${esc(ph)}</button>` : esc(ph));
+
+// The game in the players' own words: each power's debrief, then what the others said about it.
+function renderReview() {
+  const R = G.review, s = G.final.after;
+  if (!R) return `<div class="pane-head"><h2>Review</h2></div><div class="more">No review for this game. Play it with --review to hear from the players.</div>`;
+  const raters = POWERS.filter((p) => R.ranks[p]);
+  const rankOf = (rater, p) => R.ranks[rater]?.findIndex((r) => r.power === p) + 1 || 0;
+  const avg = (p) => { const rs = raters.filter((r) => r !== p).map((r) => rankOf(r, p)).filter(Boolean); return rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null; };
+  // Most centers first; peers break ties.
+  const order = [...POWERS].sort((a, b) => count(s.owners, b) - count(s.owners, a) || (avg(a) ?? 9) - (avg(b) ?? 9));
+  const grid = `<table class="grid"><tr><th></th><th>Centers</th><th>Peer rank</th>${raters.map((r) => `<th class="rater" style="color:${C(r)}">${nice(r)}</th>`).join("")}</tr>
+    ${order.map((p) => `<tr style="--c:${C(p)}"><td>${nice(p)}</td><td>${count(s.owners, p)}</td><td class="avg">${avg(p)?.toFixed(1) ?? ""}</td>${raters.map((r) => `<td class="rater ${r === p ? "self" : ""}">${r === p ? "–" : rankOf(r, p) || ""}</td>`).join("")}</tr>`).join("")}</table>`;
+  const sections = order.map((p) => {
+    const d = R.debriefs[p], a = avg(p);
+    const said = raters.filter((r) => r !== p).map((r) => ({ r, n: rankOf(r, p), x: R.ranks[r].find((x) => x.power === p) })).sort((x, y) => x.n - y.n);
+    return `<section class="judged" style="--c:${C(p)}"><h3>${nice(p)}<span>${esc(G.seats[p])}, ${count(s.owners, p)} centers${a ? `, ranked ${a.toFixed(1)} by peers` : ""}</span></h3>
+      ${d ? `<p class="plan">${esc(d.plan)}</p>
+      <div class="line"><span class="k">Best ${phaseLink(d.best.phase)}</span><span>${esc(d.best.why)}</span></div>
+      <div class="line"><span class="k">Worst ${phaseLink(d.worst.phase)}</span><span>${esc(d.worst.why)}</span></div>` : ""}
+      ${said.map(({ r, n, x }) => `<div class="line"><span class="k"><span style="color:${C(r)}">${nice(r)}</span> ${ordinal(n)}</span><span>${esc(x.why)} ${phaseLink(x.phase)}</span></div>`).join("")}
+    </section>`;
+  }).join("");
+  return `<div class="pane-head"><h2>Review</h2><span class="hint">each player on its own game, then ranking the others 1 (best) to ${POWERS.length - 1}</span></div>${grid}${sections}`;
+}
+
 function renderBand() {
   const total = G.map.centers.length;
   document.getElementById("band").innerHTML = G.phases.map((q, i) => {
     const owners = (q.after ?? q.before).owners;
-    return `<button class="${i === pi ? "on" : i < pi ? "done" : ""}" data-ph="${i}" title="${season(q.phase)}">${POWERS.map((pw) => `<i style="height:${(count(owners, pw) / total) * 100}%;background:${C(pw)}"></i>`).join("")}</button>`;
+    return `<button class="${i === pi ? "on" : i < pi ? "done" : ""}" data-ph="${i}" title="${q === G.final ? "Review" : season(q.phase)}">${POWERS.map((pw) => `<i style="height:${(count(owners, pw) / total) * 100}%;background:${C(pw)}"></i>`).join("")}</button>`;
   }).join("");
   // One label per year, spanning its phases.
   const years = [];
-  for (const q of G.phases) { const y = q.phase.slice(1); if (years.at(-1)?.y === y) years.at(-1).n++; else years.push({ y, n: 1 }); }
+  for (const q of G.phases) { const y = q === G.final ? "review" : q.phase.slice(1); if (years.at(-1)?.y === y) years.at(-1).n++; else years.push({ y, n: 1 }); }
   document.getElementById("years").innerHTML = years.map(({ y, n }) => `<span style="grid-column:span ${n}">${y}</span>`).join("");
 }
 
@@ -385,9 +448,13 @@ function render() {
   if (!G.phases.length) return;
   if (follow) { pi = G.phases.length - 1; si = steps(ph()).length - 1; }
   const p = ph(), k = st().k;
-  document.getElementById("title").textContent = season(p.phase);
+  document.getElementById("title").textContent = p === G.final ? "Review" : season(p.phase);
   const left = Math.max(0, Math.round((p.deadline - Date.now()) / 1000));
-  document.getElementById("state").textContent = { open: "opens", msg: `message ${si} of ${p.msgs.length}`, orders: p.record ? "orders in" : follow ? `${left}s left` : "in progress", resolved: "resolved" }[k];
+  // Review turns end in order: everyone's debrief, then everyone's ranking.
+  const turns = Object.values(G.final?.turns ?? {});
+  const reviewed = G.stage === "peers" && turns.length && turns.every((t) => t.phase === "peers");
+  const reviewing = reviewed ? "" : G.stage === "debrief" ? "players are looking back" : G.stage === "peers" ? "players are ranking each other" : "";
+  document.getElementById("state").textContent = { open: "opens", msg: `message ${si} of ${p.msgs.length}`, orders: p.record ? "orders in" : follow ? `${left}s left` : "in progress", resolved: "resolved", review: reviewing }[k];
   document.getElementById("play").textContent = playing ? "Pause" : "Play";
   document.getElementById("real").classList.toggle("on", real);
   document.getElementById("testing").classList.toggle("on", testing);
@@ -401,7 +468,7 @@ function render() {
   const right = document.getElementById("right");
   const opened = [...right.querySelectorAll("details")].flatMap((d, i) => (d.open ? [i] : []));
   const top = right.scrollTop, pinned = top + right.clientHeight >= right.scrollHeight - 20;
-  right.innerHTML = testing ? renderInspector() : renderPress();
+  right.innerHTML = testing ? renderInspector() : k === "review" ? renderReview() : renderPress();
   const details = right.querySelectorAll("details");
   for (const i of opened) if (details[i]) details[i].open = true;
   const now = right.querySelector(".msg.now");
@@ -425,7 +492,7 @@ const prev = () => (si > 0 ? go(pi, si - 1) : pi > 0 && go(pi - 1, -1));
 function stop() { clearTimeout(timer); playing = false; schedule(); }
 
 // How long a change stays up when playing: long enough to read a message.
-const dwell = (p, s) => (s.k === "msg" ? Math.min(3200, 700 + p.msgs[s.i].text.length * 7) : 1100);
+const dwell = (p, s) => (s.k === "msg" ? Math.min(3200, 700 + p.msgs[s.i].text.length * 7) : s.k === "review" ? 8000 : 1100);
 // Paced: each change stays up long enough to read. Real time: the gap until the next change, as it was played.
 function wait() {
   const ahead = si < steps(ph()).length - 1 ? steps(ph())[si + 1] : G.phases[pi + 1] && steps(G.phases[pi + 1])[0];
@@ -445,9 +512,10 @@ function play() {
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-ph],[data-seat],[data-clear]");
+  const t = e.target.closest("[data-ph],[data-seat],[data-clear],[data-go]");
   if (!t) return;
-  if (t.dataset.ph) { stop(); go(Number(t.dataset.ph), -1); }
+  if (t.dataset.go) { stop(); go(G.phases.findIndex((q) => q.phase === t.dataset.go), -1); }
+  else if (t.dataset.ph) { stop(); go(Number(t.dataset.ph), -1); }
   else if (t.dataset.seat) { if (testing) seat = t.dataset.seat; else filter = filter === t.dataset.seat ? null : t.dataset.seat; schedule(); }
   else { filter = null; schedule(); }
 });

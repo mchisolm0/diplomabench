@@ -189,3 +189,34 @@ test("the MCP endpoint lists and runs tools for the token's power and rejects un
   expect(out.denied).toBe(401);
   expect(out.invalid).toEqual({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "invalid request" } });
 });
+
+test("with review, players debrief, then read every message and rank the others; play tools are gone", async () => {
+  const prompts: string[] = [];
+  const replies: string[] = [];
+  const ranking = (powers: Power[]) => powers.map((power) => ({ power, why: `${power} held.`, phase: "S1901" }));
+  const reviewer = script(async (t) => {
+    if (t.phase === "debrief") {
+      prompts.push(t.prompt);
+      await expect(t.call("submit_orders", { orders: [] })).rejects.toThrow("unknown tool");
+      replies.push(await t.call("submit_debrief", { plan: "Hold.", best: "Held.", best_phase: "S1901", worst: "Held.", worst_phase: "F1999" }));
+      await t.call("submit_debrief", { plan: "Hold.", best: "Held.", best_phase: "s1901", worst: "Held.", worst_phase: "S1901" });
+    } else if (t.phase === "peers") {
+      prompts.push(t.prompt);
+      replies.push(await t.call("submit_ranking", { ranking: ranking(["ALPHA", "BETA", "DELTA"]) }));
+      await t.call("submit_ranking", { ranking: ranking(["DELTA", "ALPHA", "BETA", "EPSILON"]) });
+    }
+    await t.call("end_turn");
+  });
+  const alpha = script(async (t) => {
+    if (t.phase === "S1901") await t.call("send_message", { to: ["BETA"], text: "Just between us." });
+    await t.call("end_turn");
+  });
+  const log = await playLiveGame(seats({ ALPHA: alpha, GAMMA: reviewer }), { mode: "async", press: 1, maxPhases: 1, review: true });
+
+  expect(prompts[0]).toContain("The game is over");
+  expect(prompts[0]).not.toContain("Just between us.");
+  expect(prompts[1]).toContain("S1901, ALPHA to BETA: Just between us.");
+  expect(replies).toEqual(["Error: worst_phase must be a phase of this game, S1901 to S1901.", "Error: ranking must list each of ALPHA, BETA, DELTA, EPSILON once, best first."]);
+  expect(log.review?.debriefs).toEqual({ GAMMA: { plan: "Hold.", best: { phase: "S1901", why: "Held." }, worst: { phase: "S1901", why: "Held." } } });
+  expect(log.review?.ranks.GAMMA?.map((r) => r.power)).toEqual(["DELTA", "ALPHA", "BETA", "EPSILON"]);
+});
