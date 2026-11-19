@@ -6,6 +6,7 @@ import { MAPS, POWERS, type MapId, type Power } from "./map.ts";
 import { serveMcp, ToolError, type Tool } from "./mcp.ts";
 import { MAX_MESSAGES_PER_TURN, MAX_MESSAGE_CHARS, canSee, normalizeMessages, type Message } from "./press.ts";
 import { boardLines, describeMessage, describePhase, mapLines, rulesText } from "./prompt.ts";
+import type { Start } from "./scenario.ts";
 
 /** Bump whenever session prompts or tool text change. */
 export const SESSION_PROMPT_VERSION = "session-v1";
@@ -25,9 +26,11 @@ export type LiveOptions = {
   phaseSeconds?: number;
   /** How long harnesses get to exit after a phase closes. Default 60s; tests shorten it. */
   exitGraceMs?: number;
-  /** Stop after this many phases, for trial runs. The log's result stays null. */
+  /** Stop after this many phases (counted from `start`), for trial runs and probes. The log's result stays null. */
   maxPhases?: number;
   onPhase?: (log: GameLog) => void | Promise<void>;
+  /** Join a game in progress (see `replay`). Messages from earlier phases count as read. */
+  start?: Start;
 };
 
 /** One phase of play for one power. Harnesses reach the tools at `mcp`; in-process bots use `call` and `state`. */
@@ -67,7 +70,7 @@ type Phase = {
   submitted: Map<Power, unknown[]>;
   done: Set<Power>;
   waiting: Map<Power, () => void>;
-  toolCalls: Map<Power, number>;
+  toolCalls: Map<Power, Record<string, number>>;
   rejected: number;
   deadline: number;
   closed: boolean;
@@ -83,7 +86,7 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
   const mode = opts.mode ?? "rounds";
   const press = opts.press ?? 0;
   const phaseMs = (opts.phaseSeconds ?? (mode === "async" ? 600 : 1200)) * 1000;
-  let state = initialState(opts.map);
+  let state = opts.start?.state ?? initialState(opts.map);
   const map = MAPS[state.map];
   const log: GameLog = {
     promptVersion: SESSION_PROMPT_VERSION,
@@ -92,11 +95,12 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
     pressRounds: press,
     seats: Object.fromEntries(POWERS.map((p) => [p, seats[p].id])) as Record<Power, string>,
     startedAt: new Date().toISOString(),
-    phases: [],
+    phases: [...(opts.start?.phases ?? [])],
     final: state,
   };
-  const delivered: Message[] = [];
-  const cursor = Object.fromEntries(POWERS.map((p) => [p, 0])) as Record<Power, number>;
+  const delivered: Message[] = [...(opts.start?.messages ?? [])];
+  const read = delivered.filter((m) => m.phase !== phaseName(state)).length;
+  const cursor = Object.fromEntries(POWERS.map((p) => [p, read])) as Record<Power, number>;
   const notes = Object.fromEntries(POWERS.map((p) => [p, ""])) as Record<Power, string>;
   const played = new Set<Power>();
   let active: Power[] = [];
@@ -400,7 +404,9 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
     (t): Tool<Power> => ({
       ...t,
       run: (args, p) => {
-        phase.toolCalls.set(p, (phase.toolCalls.get(p) ?? 0) + 1);
+        const used = phase.toolCalls.get(p) ?? {};
+        used[t.name] = (used[t.name] ?? 0) + 1;
+        phase.toolCalls.set(p, used);
         return t.run(args, p);
       },
     }),
@@ -423,7 +429,8 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
   const server = await serveMcp({ name: "diplomabench", tools: counted, caller: (t) => powerOf.get(t) });
 
   try {
-    while (!state.result && !(opts.maxPhases && log.phases.length >= opts.maxPhases)) {
+    const seeded = log.phases.length;
+    while (!state.result && !(opts.maxPhases && log.phases.length - seeded >= opts.maxPhases)) {
       const current = state;
       active = POWERS.filter((p) => unitsOf(current, p).length > 0);
       phase = newPhase(phaseName(current), Date.now() + phaseMs);
@@ -494,7 +501,7 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
         decisions: Object.fromEntries(
           active.map((p) => {
             const { reply, transcript: _transcript, ...meta } = metas[p] ?? {};
-            return [p, { ...meta, plan: reply, orders: phase.submitted.get(p) ?? [], toolCalls: phase.toolCalls.get(p) ?? 0 }];
+            return [p, { ...meta, plan: reply, orders: phase.submitted.get(p) ?? [], submitted: phase.submitted.has(p), ...toolUse(phase.toolCalls.get(p) ?? {}), unread: visibleUnread(p).filter((m) => m.from !== p).length }];
           }),
         ),
         talks: [],
@@ -518,10 +525,12 @@ export async function playLiveGame(seats: Record<Power, Driver>, opts: LiveOptio
       "Use the diplomabench tools, submit orders with submit_orders, then call end_turn.",
     ].filter(Boolean);
     if (!first) return { first, text: update.join("\n") };
-    const intro = `You are ${p}, playing the whole game in this session. Each phase you get a short update like the one below. Use the diplomabench tools to read the board (status, map, history), read and send messages, test ideas with simulate, and submit orders. Submitting again replaces your orders. Call end_turn when you are finished; your turn also ends at the deadline. Older parts of this conversation may be compacted, so keep anything you want to remember with write_notes.`;
+    const intro = `You are ${p}, playing the whole game in this session. Each phase you get a short update like the one below. Use the diplomabench tools to read the board (status, map, history), read and send messages, test ideas with simulate, and submit orders. Submitting again replaces your orders. Call end_turn when you are finished; your turn also ends at the deadline. Older parts of this conversation may be compacted, so keep anything you want to remember with write_notes.${log.phases.length ? ` This session starts at ${phase.name}; everything before it is in history and search_messages.` : ""}`;
     return { first, text: [rulesText(map), "", intro, "", ...update].join("\n") };
   }
 }
+
+const toolUse = (tools: Record<string, number>) => ({ toolCalls: Object.values(tools).reduce((a, b) => a + b, 0), tools });
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref());
 
@@ -533,6 +542,18 @@ export const holdDriver: Driver = {
     return {};
   },
 };
+
+/** Submits fixed orders and ends its turn at once, never talks. */
+export function scriptedDriver(orders: string[]): Driver {
+  return {
+    id: "baseline/scripted",
+    turn: async (t) => {
+      await t.call("submit_orders", { orders });
+      await t.call("end_turn");
+      return {};
+    },
+  };
+}
 
 /** Submits a random legal order per unit, never talks. */
 export function randomDriver(seed: number): Driver {

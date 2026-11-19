@@ -10,4 +10,5 @@ Rules and goals live in `SPEC.md`. Keep it in sync with code.
 - Engine stays pure: state and orders in, new state and results out. No I/O.
 - Adjudicator or map changes: run `DIPLOMACY_PYTHON=<venv>/bin/python pnpm oracle 4000 <seed> <map>`, which fuzzes against the upstream `diplomacy` package (`pip install diplomacy==1.1.2`). Upstream breaks DATC 5.B.7 (own support for an attack on you still defends in a head-to-head), so that one known disagreement is expected.
 - `pnpm rate runs/<batch> ...` fits ratings across batches. `pnpm analyze runs/<batch> ...` replays logs for setup and map signals: blocked builds, runaway leaders, opening bounces, per-model aggression and broken promises.
+- Probes: `pnpm probe <scenario|all> --players <harness>:<model>,...`. A scenario is data in `src/scenarios/`; its script must replay with legal orders (`replay` throws otherwise), and `src/scenario.test.ts` pins each position to its intended answer. Changing a scenario changes its results, so treat scenarios like prompts.
 - Tests cover adjudication cases and the game loop, not wiring.
