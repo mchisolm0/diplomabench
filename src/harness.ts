@@ -111,6 +111,8 @@ const codex: Turner = (model, root) => {
 sandbox_mode = "read-only"
 approval_policy = "never"
 web_search = "disabled"
+# Without this, exec --json reports no reasoning for the Testing view.
+model_reasoning_summary = "detailed"
 ${readFileSync(CODEX_SETTINGS, "utf8")}
 
 [mcp_servers.diplomabench]
