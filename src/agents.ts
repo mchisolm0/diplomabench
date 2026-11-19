@@ -22,7 +22,12 @@ export type CallMeta = {
 };
 
 /** Raw orders as returned; the engine validates them. */
-export type Decision = CallMeta & { orders: unknown[]; plan?: string };
+export type Decision = CallMeta & {
+  orders: unknown[];
+  plan?: string;
+  /** Session turns: whether the game accepted orders, even an empty list (every unit holds). */
+  submitted?: boolean;
+};
 /** Raw messages as returned; `normalizeMessages` validates them. */
 export type Talk = CallMeta & { messages: unknown[] };
 
