@@ -170,7 +170,11 @@ function ingest(e) {
       const p = G.phases.find((q) => q.phase === e.phase);
       if (!p) break;
       logOf(p, e.power).push({ at: e.at, t: "game", name: e.tool, args: e.args, result: e.result });
-      if (e.tool === "submit_orders" && !e.result.startsWith("Error")) p.submitted[e.power] = e.args.orders ?? [];
+      // The game's reply names the orders as it will play them ("Recorded: ALP - ABY, BET H."), not as typed.
+      if (e.tool === "submit_orders" && e.result.startsWith("Recorded: ")) {
+        p.submitted[e.power] = e.result.split("\n")[0].slice(10, -1).split(", ");
+        p.ordered = e.at;
+      }
       break;
     }
     case "trace": {
@@ -221,7 +225,7 @@ function layout(map) {
 
 // Replay position: a phase and a change inside it (opens, each message, orders, resolution).
 function steps(p) {
-  return [{ k: "open", at: p.start }, ...p.msgs.map((m, i) => ({ k: "msg", i, at: m.at })), { k: "orders", at: p.end || Infinity }, ...(p.record ? [{ k: "resolved", at: p.end }] : [])];
+  return [{ k: "open", at: p.start }, ...p.msgs.map((m, i) => ({ k: "msg", i, at: m.at })), { k: "orders", at: p.record ? Math.max(p.ordered ?? p.end, p.msgs.at(-1)?.at ?? 0) : Infinity }, ...(p.record ? [{ k: "resolved", at: p.end }] : [])];
 }
 let pi = 0, si = 0, follow = !replay, seat = POWERS[0], testing = false, filter = null, playing = false, real = false, timer = 0;
 const ph = () => G.phases[pi];
@@ -311,13 +315,14 @@ function renderLedger() {
   const upto = G.phases.slice(0, st().k === "resolved" ? pi + 1 : pi).filter((q) => q.after);
   document.getElementById("ledger").innerHTML = POWERS.map((pw) => {
     const n = count(s.owners, pw);
-    const alive = n > 0 || Object.values(s.units).includes(pw);
-    const outAt = upto.find((q) => !count(q.after.owners, pw) && !Object.values(q.after.units).includes(pw));
+    // A power with no armies is out, though centers it still holds keep counting.
+    const alive = Object.values(s.units).includes(pw);
+    const outAt = upto.find((q) => !Object.values(q.after.units).includes(pw));
     const hist = [count(G.phases[0].before.owners, pw), ...upto.map((q) => count(q.after.owners, pw))];
     const pts = hist.map((v, i) => `${(i / Math.max(1, G.phases.length)) * 80},${21 - (v / total) * 20}`).join(" ");
     return `<tr class="${alive ? "" : "out"} ${pw === seat && testing ? "sel" : ""}" data-seat="${pw}" style="--c:${C(pw)}">
       <td class="name">${nice(pw)}</td><td class="model">${esc(G.seats[pw])}</td>
-      <td class="n">${alive ? n : `out in ${outAt ? outAt.phase.slice(1) : ""}`}</td>
+      <td class="n">${alive ? n : `out in ${outAt ? outAt.phase.slice(1) : ""}${n ? `, ${n} ${n === 1 ? "center" : "centers"}` : ""}`}</td>
       <td class="spark"><svg viewBox="0 0 80 22" style="height:18px"><polyline points="${pts}" fill="none" stroke="${C(pw)}" stroke-width="1.4" ${alive ? "" : 'stroke-opacity=".4"'}/></svg></td></tr>`;
   }).join("");
 }
@@ -388,15 +393,20 @@ function render() {
   document.getElementById("testing").classList.toggle("on", testing);
   document.getElementById("live").hidden = replay || follow;
   document.getElementById("pp").disabled = document.getElementById("pc").disabled = pi === 0 && si === 0;
-  document.getElementById("np").disabled = document.getElementById("nc").disabled = atEnd();
+  document.getElementById("nc").disabled = atEnd();
+  document.getElementById("np").disabled = pi >= G.phases.length - 1;
   renderBand(); renderMap(); renderLedger();
   document.getElementById("outcome").innerHTML = outcome();
+  // Redraws keep what the reader opened and where they scrolled; a reader at the bottom stays there.
   const right = document.getElementById("right");
+  const opened = [...right.querySelectorAll("details")].flatMap((d, i) => (d.open ? [i] : []));
+  const top = right.scrollTop, pinned = top + right.clientHeight >= right.scrollHeight - 20;
   right.innerHTML = testing ? renderInspector() : renderPress();
-  // Keep the newest line in view: the current message, or the end of a live log.
+  const details = right.querySelectorAll("details");
+  for (const i of opened) if (details[i]) details[i].open = true;
   const now = right.querySelector(".msg.now");
   if (now) now.scrollIntoView({ block: "nearest" });
-  else if (follow) right.scrollTop = right.scrollHeight;
+  else right.scrollTop = follow && pinned ? right.scrollHeight : top;
   document.documentElement.style.setProperty("--head", `${document.querySelector("header").offsetHeight}px`);
 }
 
@@ -416,35 +426,42 @@ function stop() { clearTimeout(timer); playing = false; schedule(); }
 
 // How long a change stays up when playing: long enough to read a message.
 const dwell = (p, s) => (s.k === "msg" ? Math.min(3200, 700 + p.msgs[s.i].text.length * 7) : 1100);
+// Paced: each change stays up long enough to read. Real time: the gap until the next change, as it was played.
+function wait() {
+  const ahead = si < steps(ph()).length - 1 ? steps(ph())[si + 1] : G.phases[pi + 1] && steps(G.phases[pi + 1])[0];
+  const gap = ahead ? ahead.at - st().at : NaN;
+  return real ? (Number.isFinite(gap) ? Math.max(50, gap) : 1100) : dwell(ph(), st());
+}
+function arm() {
+  clearTimeout(timer);
+  timer = setTimeout(() => { next(); if (playing) arm(); }, wait());
+}
 function play() {
   if (playing) return stop();
   if (follow || atEnd()) go(0, 0);
   playing = true;
-  const tick = () => {
-    const from = st();
-    next();
-    if (!playing) return;
-    // Real time waits the gap between this change and the next, as it was played.
-    const to = st(), gap = to.at - from.at;
-    timer = setTimeout(tick, real ? (Number.isFinite(gap) ? Math.max(50, gap) : 1100) : dwell(ph(), to));
-  };
-  timer = setTimeout(tick, real ? 400 : dwell(ph(), st()));
+  arm();
   schedule();
 }
 
 document.addEventListener("click", (e) => {
   const t = e.target.closest("[data-ph],[data-seat],[data-clear]");
   if (!t) return;
-  if (t.dataset.ph) go(Number(t.dataset.ph), -1);
+  if (t.dataset.ph) { stop(); go(Number(t.dataset.ph), -1); }
   else if (t.dataset.seat) { if (testing) seat = t.dataset.seat; else filter = filter === t.dataset.seat ? null : t.dataset.seat; schedule(); }
   else { filter = null; schedule(); }
 });
-document.getElementById("pp").onclick = () => go(si > 0 ? pi : pi - 1, 0);
-document.getElementById("np").onclick = () => go(pi + 1, 0);
+document.getElementById("pp").onclick = () => { stop(); go(si > 0 ? pi : pi - 1, 0); };
+document.getElementById("np").onclick = () => { stop(); go(pi + 1, 0); };
 document.getElementById("pc").onclick = () => { stop(); prev(); };
 document.getElementById("nc").onclick = () => { stop(); next(); };
 document.getElementById("play").onclick = play;
-document.getElementById("real").onclick = () => { real = !real; schedule(); };
+// A change of pace takes effect now, not after the wait already set.
+document.getElementById("real").onclick = () => {
+  real = !real;
+  if (playing) arm();
+  schedule();
+};
 document.getElementById("live").onclick = () => { stop(); follow = true; schedule(); };
 document.getElementById("testing").onclick = () => {
   testing = !testing;
