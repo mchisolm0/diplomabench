@@ -65,7 +65,8 @@ async function worker() {
     const decision = phase?.decisions[s.power];
     const judged = evaluate(s, v, start, decision?.orders ?? []);
     // A turn that never submitted says nothing about the question, whether it died or just ended.
-    const label = decision?.orders.length ? judged.label : decision?.error ? "error" : "no orders";
+    // An empty submission is a choice (every unit holds), so it is judged.
+    const label = decision?.tools?.submit_orders ? judged.label : decision?.error ? "error" : "no orders";
     const orders = judged.orders;
     // A scenario's question often rides on a message the player never opened.
     const unseen = Boolean(decision?.unread);
