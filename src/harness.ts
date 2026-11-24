@@ -22,15 +22,23 @@ export const CODEX_SETTINGS = join(homedir(), ".config/diplomabench/codex.toml")
 /** OpenCode providers for players, e.g. `{"provider": {...}}`. Use absolute paths in `{file:...}`, since HOME is replaced. */
 export const OPENCODE_SETTINGS = join(homedir(), ".config/diplomabench/opencode.json");
 
-/** `root` holds every seat file, including transcripts with private messages; it is mode 0700 and kept after the game. */
-export function harnessDriver(harness: HarnessName, model: string): Driver & { root: string } {
+/**
+ * `spec` is a model, optionally with a reasoning effort: `sonnet@high`. The
+ * effort stays in the seat id, so ratings keep efforts apart. Without one the
+ * harness default applies; Sonnet at Claude Code's headless default often ends
+ * its turn without orders.
+ * `root` holds every seat file, including transcripts with private messages; it is mode 0700 and kept after the game.
+ */
+export function harnessDriver(harness: HarnessName, spec: string): Driver & { root: string } {
+  const [model = spec, effort] = spec.split("@");
+  if (effort && harness === "opencode") throw new Error("opencode seats take no @effort");
   // /var/tmp, not /tmp: /tmp is often RAM-backed, and seat roots are kept after the game.
   const root = mkdtempSync("/var/tmp/diplomabench-");
   const make = { "claude-code": claudeCode, codex, opencode }[harness];
-  return { id: `${harness}/${model}`, turn: make(model, root), root };
+  return { id: `${harness}/${spec}`, turn: make(model, root, effort), root };
 }
 
-type Turner = (model: string, root: string) => Driver["turn"];
+type Turner = (model: string, root: string, effort?: string) => Driver["turn"];
 
 /**
  * The first `name` on PATH that isn't a mise command wrapper. A wrapper (a
@@ -53,7 +61,7 @@ function findCli(name: string): string {
  * Claude Code: `--bare` skips CLAUDE.md, hooks and plugins; `--tools ""` removes
  * built-ins; a seat CLAUDE_CONFIG_DIR keeps sessions out of the user's history.
  */
-const claudeCode: Turner = (model, root) => {
+const claudeCode: Turner = (model, root, effort) => {
   const session = randomUUID();
   return async (t) => {
     const cwd = seatDir(root, t);
@@ -66,6 +74,7 @@ const claudeCode: Turner = (model, root) => {
       "-p", "--bare", "--settings", CLAUDE_SETTINGS, "--model", model, "--output-format", "stream-json", "--verbose",
       // Hidden flag (2.1.x): headless output otherwise carries empty thinking blocks.
       "--thinking-display", "summarized",
+      ...(effort ? ["--effort", effort] : []),
       "--tools", "", "--mcp-config", mcpFile, "--strict-mcp-config", "--allowedTools", "mcp__diplomabench",
       // Resume whenever the session was saved, even by a turn stopped at the deadline.
       ...(globSync(`projects/*/${session}.jsonl`, { cwd: config }).length ? ["--resume", session] : ["--session-id", session]),
@@ -94,7 +103,7 @@ const CODEX_DISABLED = [
 ];
 
 /** Codex: a fresh CODEX_HOME per seat holding only the provider settings and the game server. */
-const codex: Turner = (model, root) => {
+const codex: Turner = (model, root, effort) => {
   let thread: string | undefined;
   let configured = false;
   return async (t) => {
@@ -108,7 +117,7 @@ const codex: Turner = (model, root) => {
         join(home, "config.toml"),
         // Root keys first: TOML puts keys after a [table] inside that table.
         `model = ${JSON.stringify(model)}
-sandbox_mode = "read-only"
+${effort ? `model_reasoning_effort = ${JSON.stringify(effort)}\n` : ""}sandbox_mode = "read-only"
 approval_policy = "never"
 web_search = "disabled"
 # Without this, exec --json reports no reasoning for the Testing view.
