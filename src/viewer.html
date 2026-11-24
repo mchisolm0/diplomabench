@@ -31,13 +31,15 @@ header { position: sticky; top: 0; z-index: 2; background: var(--ink); padding: 
 h1 { font: 400 26px/1.1 var(--serif); margin: 0; letter-spacing: -0.01em; }
 .state { color: var(--dim); }
 .transport { margin-left: auto; display: flex; gap: 2px; align-items: center; white-space: nowrap; flex-wrap: wrap; }
-.transport .g { font-size: 17px; line-height: 1; padding: 3px 8px; }
-.transport .sep { width: 1px; height: 16px; background: var(--rule); margin: 0 6px; }
+.transport .g, #clipbar .g { font-size: 17px; line-height: 1; padding: 3px 8px; }
+.transport .sep, #clipbar .sep { width: 1px; height: 16px; background: var(--rule); margin: 0 6px; }
 .play { min-width: 64px; font-weight: 600; }
 .band { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; margin-top: 12px; }
 .band button { padding: 0; height: 26px; display: flex; flex-direction: column-reverse; border-radius: 0; overflow: hidden; opacity: .45; }
 .band button.done { opacity: .8; }
 .band button.on { opacity: 1; box-shadow: none; outline: 1px solid var(--text); outline-offset: 1px; }
+/* A phase with a moment in Highlights. */
+.band button.mark { box-shadow: 0 -3px 0 var(--text); }
 .band i { display: block; width: 100%; }
 .years { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); color: var(--faint); font-size: 11px; padding: 3px 0 8px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
 
@@ -53,13 +55,21 @@ svg { display: block; width: 100%; height: auto; }
 .ledger td { padding: 7px 0; border-top: 1px solid var(--rule); vertical-align: middle; }
 .ledger tr { cursor: pointer; }
 .ledger tr:hover td { background: var(--raise); }
-.ledger .name { font-weight: 600; padding-left: 10px; box-shadow: inset 3px 0 0 var(--c); }
-.ledger .model { color: var(--dim); overflow-wrap: anywhere; }
+.ledger .name { font-weight: 600; color: var(--c); padding-left: 10px; box-shadow: inset 3px 0 0 var(--c); overflow-wrap: anywhere; }
+.ledger .power { color: var(--dim); padding-left: 10px; }
+.ledger .track { width: 1px; padding-left: 12px; }
 .ledger .n { text-align: right; font: 400 20px/1 var(--serif); width: 36px; }
-.ledger .spark { width: 84px; padding-left: 12px; }
 .ledger tr.out td { color: var(--faint); }
 .ledger tr.out .n { font-size: 12px; font-family: var(--sans); white-space: nowrap; width: auto; }
 .ledger tr.sel .name { box-shadow: inset 6px 0 0 var(--c); }
+.ledger tr.goal { cursor: default; }
+.ledger tr.goal td, .ledger tr.goal:hover td { color: var(--faint); text-align: right; background: none; }
+/* The race to a solo: one cell per center it takes, the last one outlined. */
+.pips { display: flex; gap: .18em; }
+.pips i { width: 1.2em; height: .55em; background: var(--land); }
+.pips i.f { background: var(--c); }
+.pips i:last-child { box-shadow: inset 0 0 0 1px var(--dim); }
+.pips i.f:last-child { box-shadow: 0 0 0 2px var(--text); }
 
 /* Press */
 .pane-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
@@ -102,6 +112,64 @@ svg { display: block; width: 100%; height: auto; }
 .judged .k { color: var(--dim); }
 .ph { padding: 0 3px; color: var(--dim); text-decoration: underline dotted; text-underline-offset: 3px; }
 
+/* Highlights */
+#reel { padding: 4px 20px 24px; }
+.mgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(400px, 100%), 1fr)); column-gap: 28px; }
+.mrow { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 16px; align-items: center; text-align: left; width: 100%; padding: 8px 10px 8px 8px; border-bottom: 1px solid var(--rule); border-radius: 0; }
+.mrow .p { display: block; color: var(--dim); }
+.mrow .t { display: block; font: 400 20px/1.2 var(--serif); margin-top: 2px; }
+.mrow q { display: block; quotes: none; font: 14px/1.4 var(--serif); color: var(--dim); margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reelfoot { display: flex; gap: 2px; padding-top: 10px; }
+
+/* An opened moment: one video frame, 720x1280 or 1280x720, scaled to fit the window. */
+#clip { padding: 10px 16px 16px; }
+#clipbar { display: flex; gap: 2px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+#fit { display: flex; justify-content: center; }
+.stage { width: 720px; height: 1280px; flex: none; background: var(--ink); outline: 1px solid var(--rule); font: 22px/1.4 var(--sans); overflow: hidden;
+  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "segs" "btext" "board" "tally"; }
+.stage.wide { width: 1280px; height: 720px; grid-template-columns: 640px minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); grid-template-areas: "segs segs" "board btext" "board tally"; }
+.segs { grid-area: segs; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; padding: 20px 32px 0; }
+.segs i { height: 5px; background: var(--rule); }
+.segs i.on { background: var(--dim); }
+.btext { grid-area: btext; padding: 24px 32px 0; }
+.stage.wide .btext { padding: 22px 32px 0 28px; }
+.when { display: flex; justify-content: space-between; color: var(--dim); }
+.when span + span { color: var(--faint); }
+.stage h2 { font: 400 58px/1.07 var(--serif); letter-spacing: -0.015em; margin: 8px 0 0; }
+.stage.wide h2 { font-size: 48px; }
+.src { margin-top: 20px; color: var(--dim); padding-left: 16px; box-shadow: inset 4px 0 0 var(--c); }
+.src q { display: block; quotes: none; font: 28px/1.38 var(--serif); color: #d3d8df; margin-top: 4px; }
+.stage.wide .src { font-size: 20px; }
+.stage.wide .src q { font-size: 25px; }
+.stage .board { grid-area: board; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 14px 0 6px; }
+.stage .board svg { height: 100%; width: auto; max-width: 100%; aspect-ratio: 1; }
+.stage.wide .board { padding: 8px 0 8px 12px; }
+.tally { grid-area: tally; align-self: end; padding: 0 32px 24px; }
+.stage.wide .tally { padding: 0 32px 22px 28px; }
+.srow { display: grid; grid-template-columns: minmax(0, 1fr) auto 40px; align-items: center; gap: 16px; padding: 3px 0 3px 16px; border-top: 1px solid var(--rule); box-shadow: inset 5px 0 0 var(--c); }
+.srow b { color: var(--c); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow .n { font: 400 28px/1 var(--serif); text-align: right; }
+.outs { display: flex; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 18px; padding: 6px 0 0 16px; border-top: 1px solid var(--rule); white-space: nowrap; }
+.card { grid-area: 2 / 1 / -1 / -1; padding: 40px 48px 60px; display: flex; flex-direction: column; }
+.stage.wide .card { padding: 30px 72px 40px; }
+.card h1 { font: 400 84px/1 var(--serif); letter-spacing: -0.02em; margin: auto 0 0; }
+.card .line { font: 400 34px/1.25 var(--serif); color: var(--dim); margin: 18px 0 0; }
+.card .tally { align-self: stretch; padding: 0; margin: 34px 0 auto; }
+/* A video frame: the stage alone, at its own size. */
+body.shot #clip { padding: 0; }
+body.shot #clipbar { display: none; }
+body.shot .stage { outline: 0; }
+
+/* A frame's parts come in on a timeline: each names its animation (--a), start (--d) and length (--dur).
+   A video frame freezes the timeline at --t. */
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+@keyframes fade { from { opacity: 0; } }
+@keyframes gone { to { opacity: 0; } }
+@keyframes slide { from { transform: translate(var(--dx), var(--dy)); } }
+.stage .a { animation: var(--a) var(--dur) ease both; animation-delay: var(--d); }
+.stage.still .a { animation-play-state: paused; animation-delay: calc(var(--d) - var(--t)); }
+@media (prefers-reduced-motion: reduce) { .stage:not(.still) .a { animation: none; } }
+
 @media (min-width: 901px) {
   /* Each column scrolls on its own, so the map stays in view while messages run. */
   main { height: calc(100vh - var(--head, 90px)); }
@@ -115,7 +183,7 @@ svg { display: block; width: 100%; height: auto; }
   header { padding: 10px 16px 0; }
   .left, .right { padding: 14px 16px; }
   .transport { margin-left: 0; width: 100%; }
-  .ledger .model { display: none; }
+  .ledger .power { display: none; }
   .grid .rater { display: none; }
 }
 @media (prefers-reduced-motion: no-preference) { .tok { transition: transform .35s ease; } }
@@ -135,6 +203,7 @@ svg { display: block; width: 100%; height: auto; }
       <button id="real" title="Play with the real time between changes">Real time</button>
       <button id="live" title="Follow the game as it is played" hidden>Live</button>
       <span class="sep"></span>
+      <button id="hl" title="The game's turning points, each ready to clip">Highlights</button>
       <button id="testing" title="Show the selected player's thinking and tool calls">Testing</button>
       <span class="sep" id="savesep"></span>
       <a class="btn" id="save" href="replay.html" download="replay.html" title="Save this game as one HTML file">Save HTML</a>
@@ -143,7 +212,7 @@ svg { display: block; width: 100%; height: auto; }
   <div class="band" id="band"></div>
   <div class="years" id="years"></div>
 </header>
-<main>
+<main id="main">
   <section class="left">
     <svg id="map" viewBox="-128 -128 256 256" role="img" aria-label="Board"></svg>
     <div class="outcome" id="outcome"></div>
@@ -151,6 +220,8 @@ svg { display: block; width: 100%; height: auto; }
   </section>
   <section class="right" id="right"></section>
 </main>
+<section id="reel" hidden></section>
+<section id="clip" hidden><div id="clipbar"></div><div id="fit"></div></section>
 <!--EVENTS-->
 <script>
 const POWERS = ["ALPHA", "BETA", "GAMMA", "DELTA", "EPSILON"];
@@ -164,7 +235,11 @@ const replay = Boolean(window.EVENTS);
 
 // The game as events describe it: one entry per phase, with its messages,
 // each player's log (game tools, harness trace, turn end) and its resolution.
-const G = { map: null, seats: {}, phases: [], last: 0, review: null, stage: "", final: null, seed: [] };
+const G = { map: null, seats: {}, phases: [], last: 0, review: null, stage: "", final: null, seed: [], moments: [] };
+// Models lead: the last part of a seat's id, with the power's name when two seats share a model.
+const short = (p) => String(G.seats[p] ?? p).split("/").at(-1);
+const model = (p) => (POWERS.some((o) => o !== p && short(o) === short(p)) ? `${short(p)} ${nice(p)}` : short(p));
+const mb = (p) => `<b style="color:${C(p)}">${esc(model(p))}</b>`;
 // After a finished game, or once players review it, a last page shows the final board and their review.
 const REVIEW = new Set(["debrief", "peers"]);
 function finalPage(at) {
@@ -279,7 +354,7 @@ const parseOrder = (text) => {
 // Orders as resolved, or while a phase is open, as players have submitted them so far.
 const ordersOf = (p) => p.record?.orders ?? Object.fromEntries(Object.entries(p.submitted).map(([pw, os]) => [pw, os.map(parseOrder).filter((o) => o && [o.unit, o.to, o.target].every((id) => !id || at[id]))]));
 
-function arrow(a, b, pw, { support, failed } = {}) {
+function arrow(a, b, pw, { support, failed, head = "m" } = {}) {
   const color = C(pw);
   const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
   const x1 = a.x + ux * 9, y1 = a.y + uy * 9, x2 = b.x - ux * (support ? 4 : 11), y2 = b.y - uy * (support ? 4 : 11);
@@ -287,41 +362,41 @@ function arrow(a, b, pw, { support, failed } = {}) {
   const cx = (x1 + x2) / 2 - uy * 6, cy = (y1 + y2) / 2 + ux * 6;
   if (support) return `<path d="M${x1} ${y1}Q${cx} ${cy} ${x2} ${y2}" fill="none" stroke="${color}" stroke-width="1.3" stroke-dasharray="1.5 2.5" stroke-linecap="round"/>`;
   const end = failed ? `<path d="M${x2 - uy * 5} ${y2 + ux * 5}L${x2 + uy * 5} ${y2 - ux * 5}" stroke="${color}" stroke-width="2.4" stroke-linecap="round"/>` : "";
-  return `<path d="M${x1} ${y1}Q${cx} ${cy} ${x2} ${y2}" fill="none" stroke="${color}" stroke-width="${failed ? 1.6 : 2.6}" ${failed ? 'stroke-dasharray="4 3" stroke-opacity=".8"' : ""} stroke-linecap="round" ${failed ? "" : `marker-end="url(#head-${pw})"`}/>${end}`;
+  return `<path d="M${x1} ${y1}Q${cx} ${cy} ${x2} ${y2}" fill="none" stroke="${color}" stroke-width="${failed ? 1.6 : 2.6}" ${failed ? 'stroke-dasharray="4 3" stroke-opacity=".8"' : ""} stroke-linecap="round" ${failed ? "" : `marker-end="url(#head-${head}-${pw})"`}/>${end}`;
 }
 
 /** The board to draw: before the phase, or after it once resolved. */
 const board = () => (st().k === "open" || st().k === "msg" || st().k === "orders" ? ph().before : ph().after);
 
-function renderMap() {
-  const p = ph(), k = st().k, resolved = k === "resolved", s = board(), map = G.map;
-  const moved = new Set(p.record?.moved), lost = new Map((p.record?.dislodged ?? []).map((d) => [d.unit, d.power])), built = new Map((p.record?.builds ?? []).map((b) => [b.unit, b.power]));
-  const o = [`<defs>${POWERS.map((pw) => `<marker id="head-${pw}" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path d="M0 0L10 5L0 10z" fill="${C(pw)}"/></marker>`).join("")}</defs>`];
-  for (const id of map.provinces) {
-    const owner = s.owners[id], pts = cells[id].map((q) => `${q.x.toFixed(2)},${q.y.toFixed(2)}`).join(" ");
-    o.push(`<polygon points="${pts}" fill="${owner ? `var(--${owner}-land)` : "var(--land)"}" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"><title>${esc(map.names[id])}${owner ? `, ${nice(owner)}` : ""}</title></polygon>`);
-  }
-  for (const id of map.provinces) {
+const heads = (id) => `<defs>${POWERS.map((pw) => `<marker id="head-${id}-${pw}" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path d="M0 0L10 5L0 10z" fill="${C(pw)}"/></marker>`).join("")}</defs>`;
+const ground = (id, owner, attrs = "") => `<polygon ${attrs} points="${cells[id].map((q) => `${q.x.toFixed(2)},${q.y.toFixed(2)}`).join(" ")}" fill="${owner ? `var(--${owner}-land)` : "var(--land)"}" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"><title>${esc(G.map.names[id])}${owner ? `, ${nice(owner)}` : ""}</title></polygon>`;
+const land = (owners) => G.map.provinces.map((id) => ground(id, owners[id]));
+function labels() {
+  return G.map.provinces.map((id) => {
     // Labels sit on the side away from the middle, where fewer arrows pass.
     const { x, y } = at[id], r = Math.hypot(x, y), ux = r > 1 ? x / r : 0, uy = r > 1 ? y / r : 1;
     const lx = x + ux * 16, ly = y + uy * 16 + 2.6;
-    o.push(`<text x="${lx}" y="${ly}" text-anchor="middle" font-size="7.5" letter-spacing=".06em" fill="var(--dim)" font-family="var(--sans)">${id}</text>`);
-    if (centers.has(id)) o.push(`<circle cx="${lx}" cy="${ly + 4.5}" r="1.6" fill="${homeOf[id] ? C(homeOf[id]) : "var(--dim)"}"/>`);
-  }
+    return `<text x="${lx}" y="${ly}" text-anchor="middle" font-size="7.5" letter-spacing=".06em" fill="var(--dim)" font-family="var(--sans)">${id}</text>${centers.has(id) ? `<circle cx="${lx}" cy="${ly + 4.5}" r="1.6" fill="${homeOf[id] ? C(homeOf[id]) : "var(--dim)"}"/>` : ""}`;
+  });
+}
+const army = (id, pw, attrs = 'class="tok"') => `<circle ${attrs} cx="${at[id].x}" cy="${at[id].y}" r="6.5" fill="${C(pw)}" stroke="var(--ink)" stroke-width="1.6"><title>${nice(pw)} army in ${esc(G.map.names[id])}</title></circle>`;
+const destroyed = (id, pw, attrs = "") => `<g ${attrs}><g transform="translate(${at[id].x + 6} ${at[id].y - 6})"><circle r="4.5" fill="var(--ink)" stroke="${C(pw)}" stroke-width="1.2"/><path d="M-2 -2L2 2M2 -2L-2 2" stroke="${C(pw)}" stroke-width="1.2"/><title>${nice(pw)} army destroyed</title></g></g>`;
+const supportEnd = (od) => ({ x: (at[od.target].x + at[od.to].x) / 2, y: (at[od.target].y + at[od.to].y) / 2 });
+
+function renderMap() {
+  const p = ph(), k = st().k, resolved = k === "resolved", s = board();
+  const moved = new Set(p.record?.moved), lost = new Map((p.record?.dislodged ?? []).map((d) => [d.unit, d.power])), built = new Map((p.record?.builds ?? []).map((b) => [b.unit, b.power]));
+  const o = [heads("m"), ...land(s.owners), ...labels()];
   if (k === "orders" || resolved) for (const [pw, os] of Object.entries(ordersOf(p))) for (const od of os) {
     if (od.action === "move") o.push(arrow(at[od.unit], at[od.to], pw, { failed: resolved && !moved.has(od.unit) }));
-    if (od.action === "support_move") o.push(arrow(at[od.unit], { x: (at[od.target].x + at[od.to].x) / 2, y: (at[od.target].y + at[od.to].y) / 2 }, pw, { support: true }));
+    if (od.action === "support_move") o.push(arrow(at[od.unit], supportEnd(od), pw, { support: true }));
     if (od.action === "support_hold") o.push(arrow(at[od.unit], at[od.target], pw, { support: true }));
   }
   for (const [id, pw] of Object.entries(s.units)) {
-    const { x, y } = at[id];
-    o.push(`<circle class="tok" cx="${x}" cy="${y}" r="6.5" fill="${C(pw)}" stroke="var(--ink)" stroke-width="1.6"><title>${nice(pw)} army in ${esc(map.names[id])}</title></circle>`);
-    if (resolved && built.has(id)) o.push(`<circle cx="${x}" cy="${y}" r="9.5" fill="none" stroke="${C(pw)}" stroke-width="1"/>`);
+    o.push(army(id, pw));
+    if (resolved && built.has(id)) o.push(`<circle cx="${at[id].x}" cy="${at[id].y}" r="9.5" fill="none" stroke="${C(pw)}" stroke-width="1"/>`);
   }
-  if (resolved) for (const [id, pw] of lost) {
-    const { x, y } = at[id];
-    o.push(`<g transform="translate(${x + 6} ${y - 6})"><circle r="4.5" fill="var(--ink)" stroke="${C(pw)}" stroke-width="1.2"/><path d="M-2 -2L2 2M2 -2L-2 2" stroke="${C(pw)}" stroke-width="1.2"/><title>${nice(pw)} army destroyed</title></g>`);
-  }
+  if (resolved) for (const [id, pw] of lost) o.push(destroyed(id, pw));
   document.getElementById("map").innerHTML = o.join("");
 }
 
@@ -329,40 +404,37 @@ function outcome() {
   const p = ph(), k = st().k, r = p.record;
   if (k === "review") {
     const result = p.after.result;
-    return result?.kind === "solo" ? `${nice(result.winners[0])} won alone.` : result ? `The game ended at the year limit.` : `The game stopped after ${G.phases.at(-2).phase}.`;
+    return result?.kind === "solo" ? `${esc(model(result.winners[0]))} won alone.` : result ? `The game ended at the year limit.` : `The game stopped after ${G.phases.at(-2).phase}.`;
   }
   if (k === "open") return `${Object.keys(p.before.units).length} armies on the board.`;
   if (k === "msg") return `Negotiating. ${si} of ${p.msgs.length} messages sent.`;
-  if (k === "orders") return r ? "Orders are in." : `Orders so far from ${list(Object.keys(p.submitted).map(nice)) || "nobody"}.`;
+  if (k === "orders") return r ? "Orders are in." : `Orders so far from ${esc(list(Object.keys(p.submitted).map(model))) || "nobody"}.`;
   const moved = new Set(r.moved), parts = [];
   const moves = Object.entries(r.orders).flatMap(([pw, os]) => os.filter((x) => x.action === "move").map((x) => ({ pw, x })));
   const won = moves.filter(({ x }) => moved.has(x.unit)).map(({ pw, x }) => `<b style="color:${C(pw)}">${x.unit} to ${x.to}</b>`);
   const bounced = moves.filter(({ x }) => !moved.has(x.unit)).map(({ pw, x }) => `<span style="color:${C(pw)}">${x.unit} to ${x.to}</span>`);
   if (won.length) parts.push(`${list(won)} succeeded.`);
   if (bounced.length) parts.push(`${list(bounced)} bounced.`);
-  for (const d of r.dislodged) parts.push(`${nice(d.power)} lost the army in ${d.unit}.`);
-  if (r.builds.length) parts.push(`${list(r.builds.map((b) => `${nice(b.power)} built in ${b.unit}`))}.`);
-  for (const d of r.disbands) parts.push(`${nice(d.power)} disbanded ${d.unit}.`);
+  for (const d of r.dislodged) parts.push(`${esc(model(d.power))} lost the army in ${d.unit}.`);
+  if (r.builds.length) parts.push(`${list(r.builds.map((b) => `${esc(model(b.power))} built in ${b.unit}`))}.`);
+  for (const d of r.disbands) parts.push(`${esc(model(d.power))} disbanded ${d.unit}.`);
   const result = p.after.result;
-  if (result) parts.push(result.kind === "solo" ? `${nice(result.winners[0])} wins alone.` : `The game ends at the year limit.`);
+  if (result) parts.push(result.kind === "solo" ? `${esc(model(result.winners[0]))} wins alone.` : `The game ends at the year limit.`);
   return parts.join(" ") || "Everyone held.";
 }
 
+/** Each power on board `s`: its centers, whether it still has armies, and the phase it went out in among `upto`. */
+const standing = (s, upto) => POWERS.map((pw) => ({ pw, n: count(s.owners, pw), alive: Object.values(s.units).includes(pw), out: upto.find((q) => !Object.values(q.after.units).includes(pw)) }));
+const played = () => G.phases.filter((q) => q.after && q !== G.final);
+const pips = (n) => `<span class="pips">${Array.from({ length: G.map.soloCenters }, (_, i) => `<i class="${i < n ? "f" : ""}"></i>`).join("")}</span>`;
+
 function renderLedger() {
-  const s = board(), total = G.map.centers.length;
   const upto = G.phases.slice(0, st().k === "resolved" ? pi + 1 : pi).filter((q) => q.after && q !== G.final);
-  document.getElementById("ledger").innerHTML = POWERS.map((pw) => {
-    const n = count(s.owners, pw);
-    // A power with no armies is out, though centers it still holds keep counting.
-    const alive = Object.values(s.units).includes(pw);
-    const outAt = upto.find((q) => !Object.values(q.after.units).includes(pw));
-    const hist = [count(G.phases[0].before.owners, pw), ...upto.map((q) => count(q.after.owners, pw))];
-    const pts = hist.map((v, i) => `${(i / Math.max(1, G.phases.length - (G.final ? 1 : 0))) * 80},${21 - (v / total) * 20}`).join(" ");
-    return `<tr class="${alive ? "" : "out"} ${pw === seat && testing ? "sel" : ""}" data-seat="${pw}" style="--c:${C(pw)}">
-      <td class="name">${nice(pw)}</td><td class="model">${esc(G.seats[pw])}</td>
-      <td class="n">${alive ? n : `out in ${outAt ? outAt.phase.slice(1) : ""}${n ? `, ${n} ${n === 1 ? "center" : "centers"}` : ""}`}</td>
-      <td class="spark"><svg viewBox="0 0 80 22" style="height:18px"><polyline points="${pts}" fill="none" stroke="${C(pw)}" stroke-width="1.4" ${alive ? "" : 'stroke-opacity=".4"'}/></svg></td></tr>`;
-  }).join("");
+  // A power with no armies is out, though centers it still holds keep counting.
+  document.getElementById("ledger").innerHTML = standing(board(), upto).map(({ pw, n, alive, out }) => `<tr class="${alive ? "" : "out"} ${pw === seat && testing ? "sel" : ""}" data-seat="${pw}" style="--c:${C(pw)}">
+      <td class="name">${esc(short(pw))}</td><td class="power">${nice(pw)}</td><td class="track">${alive ? pips(n) : ""}</td>
+      <td class="n">${alive ? n : `out in ${out ? out.phase.slice(1) : ""}${n ? `, ${n} ${n === 1 ? "center" : "centers"}` : ""}`}</td></tr>`).join("")
+    + `<tr class="goal"><td colspan="4">${G.map.soloCenters} of ${G.map.centers.length} centers wins</td></tr>`;
 }
 
 function renderPress() {
@@ -370,8 +442,8 @@ function renderPress() {
   const rows = p.msgs.slice(0, shown).map((m, i) => ({ m, i })).filter(({ m }) => !filter || m.from === filter || m.to.includes(filter));
   const left = p.msgs.length - shown;
   const everyone = (m) => m.broadcast || m.to.length === POWERS.length - 1;
-  return `<div class="pane-head"><h2>Messages</h2><span class="hint">${filter ? `to and from ${nice(filter)}` : "everything sent this phase, private ones too"}</span>${filter ? `<button data-clear>Show all</button>` : ""}</div>
-    ${rows.map(({ m, i }) => `<div class="msg ${k === "msg" && i === shown - 1 ? "now" : ""}" style="--c:${C(m.from)}"><span class="who">${nice(m.from)}</span> <span class="to">to ${everyone(m) ? "everyone" : list(m.to.map(nice))}${m.phase !== p.phase ? ` in ${esc(m.phase)}` : ""}</span><p>${esc(m.text)}</p></div>`).join("") || `<div class="more">No messages ${shown ? "to or from them" : "yet"}.</div>`}
+  return `<div class="pane-head"><h2>Messages</h2><span class="hint">${filter ? `to and from ${esc(model(filter))}` : "everything sent this phase, private ones too"}</span>${filter ? `<button data-clear>Show all</button>` : ""}</div>
+    ${rows.map(({ m, i }) => `<div class="msg ${k === "msg" && i === shown - 1 ? "now" : ""}" style="--c:${C(m.from)}"><span class="who">${esc(model(m.from))}</span> <span class="to">to ${everyone(m) ? "everyone" : esc(list(m.to.map(model)))}${m.phase !== p.phase ? ` in ${esc(m.phase)}` : ""}</span><p>${esc(m.text)}</p></div>`).join("") || `<div class="more">No messages ${shown ? "to or from them" : "yet"}.</div>`}
     ${left ? `<div class="more">${left} more this phase.</div>` : ""}`;
 }
 
@@ -434,11 +506,151 @@ function renderReview() {
   return `<div class="pane-head"><h2>Review</h2><span class="hint">each player on its own game, then ranking the others 1 (best) to ${POWERS.length - 1}</span></div>${grid}${sections}`;
 }
 
+// Highlights: the game's turning points, found by src/moments.ts. The page lists them; one opens on a
+// frame sized for video. After the last one a finished game closes on its standings.
+const SIZES = { "9:16": [720, 1280], "16:9": [1280, 720] };
+const FRAME = 1000 / 30;
+// `still` freezes an opened moment at that many ms, for a video frame. `segs` is the strip of beats along the top.
+let view = "watch", mi = 0, aspect = "9:16", still = null, segs = true, recap = 0;
+const result = () => G.final?.after.result ?? null;
+const beats = () => G.moments.length + (result() ? 1 : 0);
+const phaseAt = (m) => G.phases.find((q) => q.phase === m.phase);
+const A = (name, d, { dur = 400, style = "", cls = "" } = {}) => `class="a ${cls}" style="--a:${name};--d:${d}ms;--dur:${dur}ms;${style}"`;
+
+function finish(s) {
+  const top = Math.max(...POWERS.map((p) => count(s.owners, p))), lead = POWERS.filter((p) => count(s.owners, p) === top);
+  return lead.length === 1 ? `${mb(lead[0])} finishes on top with ${top}` : `${list(lead.map(mb))} finish level on ${top}`;
+}
+function momentTitle(m) {
+  const p = phaseAt(m), id = m.province;
+  if (m.kind === "solo") return `${mb(m.power)} ${id ? `takes ${id} and ` : ""}wins alone`;
+  if (m.kind === "limit") return `Year limit. ${finish(p.after)}`;
+  if (m.kind === "out") return m.victim ? `${mb(m.power)} knocks out ${mb(m.victim)}` : `${mb(m.power)} is out`;
+  // Ownership only changes in Fall, so a Spring move into a center has not taken it yet.
+  if (m.kind === "broken") return `${mb(m.power)} ${p.after.owners[id] === m.power && p.before.owners[id] !== m.power ? "takes" : "moves into"} ${id} after telling ${mb(m.victim)} it would not`;
+  return homeOf[id] === m.power ? `${mb(m.power)} takes its home back` : `${mb(m.power)} takes ${id}, ${mb(homeOf[id])}'s home`;
+}
+const quoteWho = (q) => esc(q.kind === "message" ? `${model(q.power)} to ${q.broadcast ? "everyone" : list(q.to.map(model))}` : `${model(q.power)}, ${q.kind === "thinking" ? "thinking" : "to itself"}`);
+
+/** When each part of a moment's frame comes in, in ms: its quotes one by one, then the move, then what the move changed. */
+function timing(m) {
+  const move = 800 + 600 * m.quotes.length;
+  return { quote: (i) => 500 + 600 * i, arrow: move - 300, move, land: move + 600, mark: move + 700, tally: move + 1000, motion: move + 1400 };
+}
+// How long a beat stays up: its motion, then long enough to read its quotes.
+const beatMs = (k) => { const m = G.moments[k]; return m ? Math.min(10000, Math.max(timing(m).motion + 1800, 1500 + 40 * m.quotes.reduce((n, q) => n + q.text.length, 0))) : 4000; };
+
+function tally(s, upto) {
+  const rows = standing(s, upto), alive = rows.filter((r) => r.alive).sort((a, b) => b.n - a.n), outs = rows.filter((r) => !r.alive).sort((a, b) => upto.indexOf(b.out) - upto.indexOf(a.out));
+  return `${alive.map(({ pw, n }) => `<div class="srow" style="--c:${C(pw)}"><b>${esc(model(pw))}</b>${pips(n)}<span class="n">${n}</span></div>`).join("")}
+    <div class="outs"><span>${esc(outs.map(({ pw, n, out }) => `${model(pw)} out ${out ? out.phase.slice(1) : ""}${n ? `, ${n} ${n === 1 ? "center" : "centers"}` : ""}`).join(", "))}</span><span>${G.map.soloCenters} of ${G.map.centers.length} wins</span></div>`;
+}
+
+/** The board after the moment's phase. The army that did it slides in from where it stood, and the ground it took changes color. */
+function momentBoard(m) {
+  const p = phaseAt(m), s = p.after, T = timing(m), id = m.province;
+  const flipped = id && s.owners[id] !== p.before.owners[id];
+  const o = [heads("c"), ...land(flipped ? { ...s.owners, [id]: p.before.owners[id] } : s.owners)];
+  if (flipped) o.push(ground(id, s.owners[id], A("fade", T.land)));
+  o.push(...labels());
+  if (m.from) {
+    const supports = Object.entries(p.record.orders).flatMap(([pw, os]) => os.filter((x) => x.action === "support_move" && x.target === m.from && x.to === id).map((x) => arrow(at[x.unit], supportEnd(x), pw, { support: true })));
+    o.push(`<g ${A("fade", T.arrow, { dur: 300 })}>${arrow(at[m.from], at[id], m.power, { head: "c" })}${supports.join("")}</g>`);
+  }
+  const lost = id && p.record.dislodged.find((d) => d.unit === id);
+  if (lost) o.push(army(id, lost.power, A("gone", T.land - 100, { dur: 200 })));
+  for (const [u, pw] of Object.entries(s.units)) o.push(army(u, pw, m.from && u === id ? A("slide", T.move, { dur: 700, style: `--dx:${at[m.from].x - at[u].x}px;--dy:${at[m.from].y - at[u].y}px` }) : ""));
+  if (lost) o.push(destroyed(id, lost.power, A("fade", T.mark)));
+  if (id) o.push(`<circle ${A("fade", T.mark)} cx="${at[id].x}" cy="${at[id].y}" r="12" fill="none" stroke="var(--text)" stroke-width="1.2"/>`);
+  return o.join("");
+}
+
+function endCard() {
+  const r = result(), all = played();
+  return `<div class="card"><div class="when"><span>diplomabench</span></div>
+    <h1 ${A("rise", 0)}>${r.kind === "solo" ? `${mb(r.winners[0])} wins alone` : finish(G.final.after)}</h1>
+    <p class="line">${season(all.at(-1).phase)}, after ${all.length} phases and ${all.reduce((n, q) => n + q.msgs.length, 0)} messages.</p>
+    <div ${A("fade", 300, { cls: "tally" })}>${tally(G.final.after, all)}</div></div>`;
+}
+
+/** Beat `k` on its frame: a moment, or past the last one, the end card. */
+function beatFrame(k) {
+  const m = G.moments[k];
+  const open = `<div class="stage ${aspect === "16:9" ? "wide" : ""} ${still === null ? "" : "still"}" style="--t:${still ?? 0}ms">${segs ? `<div class="segs">${Array.from({ length: beats() }, (_, j) => `<i class="${j <= k ? "on" : ""}"></i>`).join("")}</div>` : ""}`;
+  if (!m) return `${open}${endCard()}</div>`;
+  const p = phaseAt(m), T = timing(m), all = played();
+  return `${open}<div class="btext"><div class="when"><span>${season(m.phase)}</span><span>diplomabench</span></div><h2 ${A("rise", 0)}>${momentTitle(m)}</h2>
+    ${m.quotes.map((q, i) => `<div ${A("rise", T.quote(i), { cls: "src", style: `--c:${C(q.power)}` })}>${quoteWho(q)}<q>“${esc(q.text)}”</q></div>`).join("")}</div>
+    <div class="board"><svg viewBox="-128 -128 256 256" role="img" aria-label="Board">${momentBoard(m)}</svg></div>
+    <div ${A("fade", T.tally, { cls: "tally" })}>${tally(p.after, all.slice(0, all.indexOf(p) + 1))}</div></div>`;
+}
+
+function renderReel() {
+  if (!G.moments.length) return `<div class="more">No moments yet.</div>`;
+  return `<div class="mgrid">${G.moments.map((m, k) => {
+    const s = phaseAt(m).after, id = m.province;
+    return `<button class="mrow" data-moment="${k}"><svg viewBox="-128 -128 256 256" aria-hidden="true">${land(s.owners).join("")}${Object.entries(s.units).map(([u, pw]) => army(u, pw, "")).join("")}${id ? `<circle cx="${at[id].x}" cy="${at[id].y}" r="15" fill="none" stroke="var(--text)" stroke-width="3"/>` : ""}</svg>
+      <span><span class="p">${season(m.phase)}</span><span class="t">${momentTitle(m)}</span>${m.quotes[0] ? `<q>“${esc(m.quotes[0].text)}”</q>` : ""}</span></button>`;
+  }).join("")}</div>
+    <div class="reelfoot"><button data-recap>Play recap</button>${replay ? "" : `<a class="btn" href="clip.mp4?moment=all&aspect=9:16" download="recap.mp4" title="Renders every moment as one 9:16 video. Takes a few minutes.">Save recap video</a>`}</div>`;
+}
+
+// Redrawing a frame restarts its motion, so each part is drawn only when what it shows changes.
+const drawn = {};
+function draw(id, key, html) {
+  if (drawn[id] === key) return;
+  drawn[id] = key;
+  document.getElementById(id).innerHTML = html();
+}
+function fit() {
+  const stage = document.querySelector("#fit .stage");
+  if (!stage || still !== null) return;
+  const [w, h] = SIZES[aspect];
+  stage.style.zoom = Math.min(1, (innerWidth - 32) / w, (innerHeight - document.getElementById("fit").getBoundingClientRect().top - 16) / h);
+}
+function renderClip() {
+  const n = beats();
+  draw("clipbar", [mi, n, aspect, Boolean(recap)].join(), () => `<button data-view="highlights" title="Back to Highlights (Esc)">Highlights</button><span class="sep"></span>
+    <button class="g" data-beat="-1" ${mi ? "" : "disabled"} title="Previous moment (Left)" aria-label="Previous moment">←</button><button class="play" data-recap title="Play from here (Space)">${recap ? "Pause" : "Play"}</button><button class="g" data-beat="1" ${mi < n - 1 ? "" : "disabled"} title="Next moment (Right)" aria-label="Next moment">→</button>
+    <span class="state">${mi + 1} of ${n}</span><span class="sep"></span>
+    ${Object.keys(SIZES).map((a) => `<button data-aspect="${a}" class="${a === aspect ? "on" : ""}">${a}</button>`).join("")}
+    ${replay ? "" : `<span class="sep"></span><a class="btn" href="clip.mp4?moment=${mi + 1}&aspect=${aspect}" download="moment-${mi + 1}.mp4" title="Renders this moment as a video. Takes about half a minute.">Save video</a>`}`);
+  draw("fit", [mi, n, aspect, still].join(), () => beatFrame(mi));
+  fit();
+}
+
+function openMoment(k) {
+  view = "moment";
+  mi = Math.max(0, Math.min(k, beats() - 1));
+  schedule();
+}
+function stopRecap() { clearTimeout(recap); recap = 0; schedule(); }
+function armRecap() {
+  recap = setTimeout(() => { if (mi >= beats() - 1) return stopRecap(); openMoment(mi + 1); armRecap(); }, beatMs(mi));
+}
+function toggleRecap() {
+  if (recap) return stopRecap();
+  if (view !== "moment" || mi >= beats() - 1) openMoment(0);
+  // Play starts the beat on screen from its top.
+  delete drawn.fit;
+  armRecap();
+  schedule();
+}
+/** For `pnpm watch --video --moment`: every frame of one beat or of them all, as the query that draws it and how long it stays up. */
+function clipFrames(which) {
+  const ks = which === "all" ? Array.from({ length: beats() }, (_, k) => k) : [Number(which) - 1].filter((k) => k >= 0 && k < beats());
+  return ks.flatMap((k) => {
+    const m = G.moments[k], n = Math.ceil((m ? timing(m).motion : 700) / FRAME);
+    const q = (i) => `moment=${k + 1}&t=${Math.round(i * FRAME)}&aspect=${aspect}${which === "all" ? "" : "&segs=0"}`;
+    return [...Array.from({ length: n }, (_, i) => ({ q: q(i), ms: FRAME })), { q: q(n), ms: beatMs(k) - n * FRAME }];
+  });
+}
+
 function renderBand() {
   const total = G.map.centers.length;
   document.getElementById("band").innerHTML = G.phases.map((q, i) => {
     const owners = (q.after ?? q.before).owners;
-    return `<button class="${i === pi ? "on" : i < pi ? "done" : ""}" data-ph="${i}" title="${q === G.final ? "Review" : season(q.phase)}">${POWERS.map((pw) => `<i style="height:${(count(owners, pw) / total) * 100}%;background:${C(pw)}"></i>`).join("")}</button>`;
+    return `<button class="${i === pi ? "on" : i < pi ? "done" : ""} ${G.moments.some((m) => m.phase === q.phase) ? "mark" : ""}" data-ph="${i}" title="${q === G.final ? "Review" : season(q.phase)}">${POWERS.map((pw) => `<i style="height:${(count(owners, pw) / total) * 100}%;background:${C(pw)}"></i>`).join("")}</button>`;
   }).join("");
   // One label per year, spanning its phases.
   const years = [];
@@ -449,22 +661,29 @@ function renderBand() {
 function render() {
   if (!G.phases.length) return;
   if (follow) { pi = G.phases.length - 1; si = steps(ph()).length - 1; }
-  const p = ph(), k = st().k;
-  document.getElementById("title").textContent = p === G.final ? "Review" : season(p.phase);
+  document.querySelector("header").hidden = view === "moment";
+  for (const [id, v] of [["main", "watch"], ["reel", "highlights"], ["clip", "moment"]]) document.getElementById(id).hidden = view !== v;
+  if (view === "moment") return renderClip();
+  const p = ph(), k = st().k, highlights = view === "highlights";
+  document.getElementById("title").textContent = highlights ? "Highlights" : p === G.final ? "Review" : season(p.phase);
   const left = Math.max(0, Math.round((p.deadline - Date.now()) / 1000));
   // Review turns end in order: everyone's debrief, then everyone's ranking.
   const turns = Object.values(G.final?.turns ?? {});
   const reviewed = G.stage === "peers" && turns.length && turns.every((t) => t.phase === "peers");
   const reviewing = reviewed ? "" : G.stage === "debrief" ? "players are looking back" : G.stage === "peers" ? "players are ranking each other" : "";
-  document.getElementById("state").textContent = { open: "opens", msg: `message ${si} of ${p.msgs.length}`, orders: p.record ? "orders in" : follow ? `${left}s left` : "in progress", resolved: "resolved", review: reviewing }[k];
+  document.getElementById("state").textContent = highlights ? `${G.moments.length} ${G.moments.length === 1 ? "moment" : "moments"}` : { open: "opens", msg: `message ${si} of ${p.msgs.length}`, orders: p.record ? "orders in" : follow ? `${left}s left` : "in progress", resolved: "resolved", review: reviewing }[k];
   document.getElementById("play").textContent = playing ? "Pause" : "Play";
   document.getElementById("real").classList.toggle("on", real);
   document.getElementById("testing").classList.toggle("on", testing);
+  document.getElementById("hl").classList.toggle("on", highlights);
   document.getElementById("live").hidden = replay || follow;
   document.getElementById("pp").disabled = document.getElementById("pc").disabled = pi === 0 && si === 0;
   document.getElementById("nc").disabled = atEnd();
   document.getElementById("np").disabled = pi >= G.phases.length - 1;
-  renderBand(); renderMap(); renderLedger();
+  renderBand();
+  document.documentElement.style.setProperty("--head", `${document.querySelector("header").offsetHeight}px`);
+  if (highlights) return draw("reel", JSON.stringify(G.moments), renderReel);
+  renderMap(); renderLedger();
   document.getElementById("outcome").innerHTML = outcome();
   // Redraws keep what the reader opened and where they scrolled; a reader at the bottom stays there.
   const right = document.getElementById("right");
@@ -477,7 +696,6 @@ function render() {
   if (now) now.scrollIntoView({ block: "nearest" });
   // A video frame of the Testing view shows the newest trace entries.
   else right.scrollTop = (follow && pinned) || (testing && q.has("frame")) ? right.scrollHeight : top;
-  document.documentElement.style.setProperty("--head", `${document.querySelector("header").offsetHeight}px`);
 }
 
 let frame = 0;
@@ -485,6 +703,7 @@ const schedule = () => { if (!frame) frame = requestAnimationFrame(() => { frame
 
 function go(p, s) {
   follow = false;
+  view = "watch";
   pi = Math.max(0, Math.min(p, G.phases.length - 1));
   const n = steps(ph()).length;
   si = s < 0 ? n + s : Math.min(s, n - 1);
@@ -507,6 +726,7 @@ function arm() {
   timer = setTimeout(() => { next(); if (playing) arm(); }, wait());
 }
 function play() {
+  view = "watch";
   if (playing) return stop();
   if (follow || atEnd()) go(0, 0);
   playing = true;
@@ -515,9 +735,14 @@ function play() {
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-ph],[data-seat],[data-clear],[data-go]");
+  const t = e.target.closest("[data-ph],[data-seat],[data-clear],[data-go],[data-moment],[data-beat],[data-view],[data-aspect],[data-recap]");
   if (!t) return;
-  if (t.dataset.go) { stop(); go(G.phases.findIndex((q) => q.phase === t.dataset.go), -1); }
+  if (t.dataset.moment) openMoment(Number(t.dataset.moment));
+  else if (t.dataset.beat) { stopRecap(); openMoment(mi + Number(t.dataset.beat)); }
+  else if (t.dataset.view) { stopRecap(); view = t.dataset.view; }
+  else if (t.dataset.aspect) { aspect = t.dataset.aspect; schedule(); }
+  else if ("recap" in t.dataset) toggleRecap();
+  else if (t.dataset.go) { stop(); go(G.phases.findIndex((q) => q.phase === t.dataset.go), -1); }
   else if (t.dataset.ph) { stop(); go(Number(t.dataset.ph), -1); }
   else if (t.dataset.seat) { if (testing) seat = t.dataset.seat; else filter = filter === t.dataset.seat ? null : t.dataset.seat; schedule(); }
   else { filter = null; schedule(); }
@@ -533,14 +758,23 @@ document.getElementById("real").onclick = () => {
   if (playing) arm();
   schedule();
 };
-document.getElementById("live").onclick = () => { stop(); follow = true; schedule(); };
+document.getElementById("live").onclick = () => { stop(); follow = true; view = "watch"; schedule(); };
+document.getElementById("hl").onclick = () => { stop(); view = view === "highlights" ? "watch" : "highlights"; schedule(); };
 document.getElementById("testing").onclick = () => {
   testing = !testing;
+  view = "watch";
   try { localStorage.setItem("diplomabench-testing", testing ? "1" : ""); } catch {}
   schedule();
 };
 document.addEventListener("keydown", (e) => {
   if (e.target.closest("input, textarea")) return;
+  if (view === "moment") {
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); stopRecap(); openMoment(mi + (e.key === "ArrowRight" ? 1 : -1)); }
+    if (e.key === " ") { e.preventDefault(); toggleRecap(); }
+    if (e.key === "Escape") { stopRecap(); view = "highlights"; }
+    return;
+  }
+  if (e.key === "Escape" && view === "highlights") { view = "watch"; schedule(); }
   if (e.key === "ArrowRight") { e.preventDefault(); e.shiftKey ? document.getElementById("np").click() : document.getElementById("nc").click(); }
   if (e.key === "ArrowLeft") { e.preventDefault(); e.shiftKey ? document.getElementById("pp").click() : document.getElementById("pc").click(); }
   if (e.key === " ") { e.preventDefault(); play(); }
@@ -549,23 +783,34 @@ try { testing = localStorage.getItem("diplomabench-testing") === "1"; } catch {}
 const q = new URLSearchParams(location.search);
 if (q.has("testing")) testing = q.get("testing") !== "0";
 if (q.has("seat")) seat = q.get("seat").toUpperCase();
+if (SIZES[q.get("aspect")]) aspect = q.get("aspect");
+addEventListener("resize", fit);
 // A saved file is already the export.
 document.getElementById("save").hidden = document.getElementById("savesep").hidden = replay;
 
 if (replay) {
   for (const e of window.EVENTS) ingest(e);
-  // `pnpm watch --video` asks for every change and how long it stays up, then one screenshot per change.
+  G.moments = window.MOMENTS ?? [];
+  // `pnpm watch --video` asks for every frame (the query that draws it and how long it stays up), then takes one screenshot per frame.
+  // The whole replay is one frame per change; `moment` asks for a moment's motion instead.
   const frames = G.phases.flatMap((p, i) => steps(p).map((s, j) => ({ i, j, ms: dwell(p, s) })));
   const i = G.phases.findIndex((x) => x.phase === q.get("phase"));
-  if (q.has("frames")) document.body.innerHTML = `<pre id="frames">${JSON.stringify(frames.map((f) => f.ms))}</pre>`;
-  else if (q.has("frame")) { const f = frames[Number(q.get("frame"))]; go(f.i, f.j); }
-  else if (i >= 0) go(i, q.has("step") ? Number(q.get("step")) : -1);
   // A finished game opens on its last change; Play starts from the top.
-  else if (G.phases.length) go(G.phases.length - 1, -1);
+  if (G.phases.length) go(i >= 0 ? i : G.phases.length - 1, i >= 0 && q.has("step") ? Number(q.get("step")) : -1);
+  if (q.has("frames")) document.body.innerHTML = `<pre id="frames">${JSON.stringify(q.has("moment") ? clipFrames(q.get("moment")) : frames.map((f, n) => ({ q: `frame=${n}`, ms: f.ms })))}</pre>`;
+  else if (q.has("frame")) { const f = frames[Number(q.get("frame"))]; go(f.i, f.j); }
+  else if (q.has("moment")) {
+    openMoment(Number(q.get("moment")) - 1);
+    if (q.has("t")) { still = Number(q.get("t")); segs = q.get("segs") !== "0"; document.body.classList.add("shot"); }
+  } else if (q.get("view") === "highlights") view = "highlights";
   if (!q.has("frames")) render();
 } else {
+  if (q.get("view") === "highlights") view = "highlights";
+  // The server finds the moments; ask again whenever a phase resolves.
+  let asked = 0;
+  const askMoments = () => { clearTimeout(asked); asked = setTimeout(async () => { const found = await (await fetch("moments")).json(); G.moments = found.filter((m) => phaseAt(m)?.after); schedule(); }, 300); };
   const source = new EventSource("events");
-  source.onmessage = (m) => { ingest(JSON.parse(m.data)); schedule(); };
+  source.onmessage = (m) => { const e = JSON.parse(m.data); ingest(e); if (e.kind === "resolved") askMoments(); schedule(); };
   setInterval(() => follow && schedule(), 1000);
 }
 </script>
