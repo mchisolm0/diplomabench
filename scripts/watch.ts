@@ -1,12 +1,13 @@
 // Usage: node scripts/watch.ts <run dir | game-NN.events.jsonl> [--port 4747]
 //        node scripts/watch.ts <run dir | events file> --html replay.html
-//        node scripts/watch.ts <run dir | events file> --video replay.mp4
+//        node scripts/watch.ts <run dir | events file> --video replay.mp4 [--testing ALPHA]
 // Spectator for session games: the board, every message (private ones too),
 // every player's orders and end-of-turn words, and with Testing on, each
 // player's thinking and tool calls. A game still being played streams live;
 // a finished one replays. --html writes a single self-contained replay file.
 // --video renders one frame per change with headless Chromium (CHROME, default
-// chromium) and joins them with ffmpeg.
+// chromium) and joins them with ffmpeg; --testing records that seat's Testing
+// view (its thinking and tool calls) instead of the messages.
 import { execFile } from "node:child_process";
 import { closeSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -16,7 +17,7 @@ import { parseArgs, promisify } from "node:util";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { port: { type: "string", default: "4747" }, html: { type: "string" }, video: { type: "string" } },
+  options: { port: { type: "string", default: "4747" }, html: { type: "string" }, video: { type: "string" }, testing: { type: "string" } },
 });
 
 const target = positionals[0];
@@ -51,7 +52,7 @@ if (values.html) {
   const png = (i: number) => join(dir, `${String(i).padStart(5, "0")}.png`);
   let next = 0;
   const shoot = async () => {
-    for (let i = next++; i < frames.length; i = next++) await run(chrome, [...headless, `--screenshot=${png(i)}`, `${url}?frame=${i}`]);
+    for (let i = next++; i < frames.length; i = next++) await run(chrome, [...headless, `--screenshot=${png(i)}`, `${url}?frame=${i}${values.testing ? `&testing&seat=${values.testing}` : ""}`]);
   };
   await Promise.all(Array.from({ length: 6 }, shoot));
   // The concat format takes each frame's duration; the last frame is listed twice so its duration counts.
