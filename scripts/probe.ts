@@ -62,7 +62,7 @@ async function worker() {
     const start = replay(s.map, v);
     const driver = harnessDriver(harnessOf(job.player), job.player.slice(job.player.indexOf(":") + 1));
     const seats = Object.fromEntries(POWERS.map((p) => [p, p === s.power ? driver : scriptedDriver(v.others[p] ?? [])])) as Record<Power, Driver>;
-    const events = `${dir}/${job.name}-${job.variant}-${job.player.replace(/[^\w.-]+/g, "_")}-${job.sample + 1}.events.jsonl`;
+    const events = `${dir}/${String(i + 1).padStart(3, "0")}-${job.name}-${job.variant}-${job.player.replace(/[^\w.-]+/g, "_")}-${job.sample + 1}.events.jsonl`;
     const log = await playLiveGame(seats, { map: s.map, mode: "rounds", press: 1, phaseSeconds: deadline, maxPhases: 1, start, spectator: fileSpectator(events) });
     const phase = log.phases.at(-1);
     const decision = phase?.decisions[s.power];

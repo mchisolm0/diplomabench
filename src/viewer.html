@@ -475,7 +475,8 @@ function render() {
   for (const i of opened) if (details[i]) details[i].open = true;
   const now = right.querySelector(".msg.now");
   if (now) now.scrollIntoView({ block: "nearest" });
-  else right.scrollTop = follow && pinned ? right.scrollHeight : top;
+  // A video frame of the Testing view shows the newest trace entries.
+  else right.scrollTop = (follow && pinned) || (testing && q.has("frame")) ? right.scrollHeight : top;
   document.documentElement.style.setProperty("--head", `${document.querySelector("header").offsetHeight}px`);
 }
 
