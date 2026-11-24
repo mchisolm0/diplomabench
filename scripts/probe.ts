@@ -3,7 +3,8 @@
 // Each sample is one phase of a seeded game (src/scenarios): the probed power
 // is a fresh session of the player, and every other power plays the variant's
 // fixed orders. Results go to <out>/<time>-probe/results.jsonl, with label
-// counts per player and variant in summary.json.
+// counts per player and variant in summary.json. Each sample also writes an
+// events.jsonl that `pnpm watch` replays.
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { CLAUDE_SETTINGS } from "../src/agents.ts";
@@ -13,6 +14,7 @@ import { playLiveGame, scriptedDriver, type Driver } from "../src/live.ts";
 import { POWERS, type Power } from "../src/map.ts";
 import { evaluate, replay } from "../src/scenario.ts";
 import { SCENARIOS } from "../src/scenarios/index.ts";
+import { fileSpectator } from "../src/spectate.ts";
 import { readUsage, usageDelta } from "../src/usage.ts";
 
 const { values, positionals } = parseArgs({
@@ -60,7 +62,8 @@ async function worker() {
     const start = replay(s.map, v);
     const driver = harnessDriver(harnessOf(job.player), job.player.slice(job.player.indexOf(":") + 1));
     const seats = Object.fromEntries(POWERS.map((p) => [p, p === s.power ? driver : scriptedDriver(v.others[p] ?? [])])) as Record<Power, Driver>;
-    const log = await playLiveGame(seats, { map: s.map, mode: "rounds", press: 1, phaseSeconds: deadline, maxPhases: 1, start });
+    const events = `${dir}/${job.name}-${job.variant}-${job.player.replace(/[^\w.-]+/g, "_")}-${job.sample + 1}.events.jsonl`;
+    const log = await playLiveGame(seats, { map: s.map, mode: "rounds", press: 1, phaseSeconds: deadline, maxPhases: 1, start, spectator: fileSpectator(events) });
     const phase = log.phases.at(-1);
     const decision = phase?.decisions[s.power];
     const judged = evaluate(s, v, start, decision?.orders ?? []);
@@ -85,6 +88,7 @@ async function worker() {
       outputTokens: decision?.outputTokens,
       costUsd: decision?.costUsd,
       seat: driver.root,
+      events,
     };
     await appendFile(`${dir}/results.jsonl`, `${JSON.stringify(record)}\n`);
     console.log(`${job.name}/${job.variant} ${job.player} #${job.sample + 1}: ${label}${decision?.error ? ` (${decision.error})` : ""}`);

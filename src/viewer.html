@@ -164,7 +164,7 @@ const replay = Boolean(window.EVENTS);
 
 // The game as events describe it: one entry per phase, with its messages,
 // each player's log (game tools, harness trace, turn end) and its resolution.
-const G = { map: null, seats: {}, phases: [], last: 0, review: null, stage: "", final: null };
+const G = { map: null, seats: {}, phases: [], last: 0, review: null, stage: "", final: null, seed: [] };
 // After a finished game, or once players review it, a last page shows the final board and their review.
 const REVIEW = new Set(["debrief", "peers"]);
 function finalPage(at) {
@@ -183,10 +183,12 @@ function ingest(e) {
     case "game":
       G.map = e.map;
       G.seats = e.seats;
+      // A probe starts mid-game; its first phase opens with the messages that came before.
+      G.seed = e.messages;
       layout(e.map);
       break;
     case "phase":
-      G.phases.push({ phase: e.phase, before: e.state, deadline: e.deadline, start: e.at, msgs: [], log: {}, turns: {}, submitted: {}, record: null, after: null, end: 0 });
+      G.phases.push({ phase: e.phase, before: e.state, deadline: e.deadline, start: e.at, msgs: G.phases.length ? [] : G.seed.map((m) => ({ ...m, at: e.at })), log: {}, turns: {}, submitted: {}, record: null, after: null, end: 0 });
       break;
     case "message":
       cur?.msgs.push({ ...e.message, at: e.at });
@@ -369,7 +371,7 @@ function renderPress() {
   const left = p.msgs.length - shown;
   const everyone = (m) => m.broadcast || m.to.length === POWERS.length - 1;
   return `<div class="pane-head"><h2>Messages</h2><span class="hint">${filter ? `to and from ${nice(filter)}` : "everything sent this phase, private ones too"}</span>${filter ? `<button data-clear>Show all</button>` : ""}</div>
-    ${rows.map(({ m, i }) => `<div class="msg ${k === "msg" && i === shown - 1 ? "now" : ""}" style="--c:${C(m.from)}"><span class="who">${nice(m.from)}</span> <span class="to">to ${everyone(m) ? "everyone" : list(m.to.map(nice))}</span><p>${esc(m.text)}</p></div>`).join("") || `<div class="more">No messages ${shown ? "to or from them" : "yet"}.</div>`}
+    ${rows.map(({ m, i }) => `<div class="msg ${k === "msg" && i === shown - 1 ? "now" : ""}" style="--c:${C(m.from)}"><span class="who">${nice(m.from)}</span> <span class="to">to ${everyone(m) ? "everyone" : list(m.to.map(nice))}${m.phase !== p.phase ? ` in ${esc(m.phase)}` : ""}</span><p>${esc(m.text)}</p></div>`).join("") || `<div class="more">No messages ${shown ? "to or from them" : "yet"}.</div>`}
     ${left ? `<div class="more">${left} more this phase.</div>` : ""}`;
 }
 
@@ -492,7 +494,7 @@ const prev = () => (si > 0 ? go(pi, si - 1) : pi > 0 && go(pi - 1, -1));
 function stop() { clearTimeout(timer); playing = false; schedule(); }
 
 // How long a change stays up when playing: long enough to read a message.
-const dwell = (p, s) => (s.k === "msg" ? Math.min(3200, 700 + p.msgs[s.i].text.length * 7) : s.k === "review" ? 8000 : 1100);
+const dwell = (p, s) => (s.k === "msg" ? Math.min(3200, 700 + p.msgs[s.i].text.length * 7) : s.k === "review" ? (G.review ? 8000 : 2500) : 1100);
 // Paced: each change stays up long enough to read. Real time: the gap until the next change, as it was played.
 function wait() {
   const ahead = si < steps(ph()).length - 1 ? steps(ph())[si + 1] : G.phases[pi + 1] && steps(G.phases[pi + 1])[0];
