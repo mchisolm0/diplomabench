@@ -528,7 +528,7 @@ function momentTitle(m) {
   if (m.kind === "out") return m.victim ? `${mb(m.power)} knocks out ${mb(m.victim)}` : `${mb(m.power)} is out`;
   // Ownership only changes in Fall, so a Spring move into a center has not taken it yet.
   if (m.kind === "broken") return `${mb(m.power)} ${p.after.owners[id] === m.power && p.before.owners[id] !== m.power ? "takes" : "moves into"} ${id} after telling ${mb(m.victim)} it would not`;
-  return G.map.homes[m.power].includes(id) ? `${mb(m.power)} takes its home back` : `${mb(m.power)} takes ${id}, ${mb(m.victim)}'s home`;
+  return homeOf[id] === m.power ? `${mb(m.power)} takes its home back` : `${mb(m.power)} takes ${id}, ${mb(homeOf[id])}'s home`;
 }
 const quoteWho = (q) => esc(q.kind === "message" ? `${model(q.power)} to ${q.broadcast ? "everyone" : list(q.to.map(model))}` : `${model(q.power)}, ${q.kind === "thinking" ? "thinking" : "to itself"}`);
 
@@ -543,7 +543,7 @@ const beatMs = (k) => { const m = G.moments[k]; return m ? Math.min(10000, Math.
 function tally(s, upto) {
   const rows = standing(s, upto), alive = rows.filter((r) => r.alive).sort((a, b) => b.n - a.n), outs = rows.filter((r) => !r.alive).sort((a, b) => upto.indexOf(b.out) - upto.indexOf(a.out));
   return `${alive.map(({ pw, n }) => `<div class="srow" style="--c:${C(pw)}"><b>${esc(model(pw))}</b>${pips(n)}<span class="n">${n}</span></div>`).join("")}
-    <div class="outs"><span>${esc(outs.map(({ pw, out }) => `${model(pw)} out ${out ? out.phase.slice(1) : ""}`).join(", "))}</span><span>${G.map.soloCenters} of ${G.map.centers.length} wins</span></div>`;
+    <div class="outs"><span>${esc(outs.map(({ pw, n, out }) => `${model(pw)} out ${out ? out.phase.slice(1) : ""}${n ? `, ${n} ${n === 1 ? "center" : "centers"}` : ""}`).join(", "))}</span><span>${G.map.soloCenters} of ${G.map.centers.length} wins</span></div>`;
 }
 
 /** The board after the moment's phase. The army that did it slides in from where it stood, and the ground it took changes color. */

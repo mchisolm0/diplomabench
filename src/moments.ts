@@ -16,6 +16,7 @@ export type Moment = {
   phase: string;
   kind: "solo" | "limit" | "out" | "broken" | "home";
   power?: Power;
+  /** Who it happened to: the power knocked out, lied to, or holding the province before. */
   victim?: Power;
   /** The province taken or entered, and where the army came from if it moved this phase. */
   province?: Province;
@@ -27,7 +28,9 @@ type Said = { power: Power; kind: "thinking" | "text"; text: string; at: number 
 
 const MAX_QUOTE = 180;
 // "no move to DEL", "won't attack BET", "will not enter ABY". Not a threat like "if you do not move out of DEL".
-const PROMISE = /(?<!\byou (?:\w+ )?)\b(?:no|not|won't|never) (?:be )?(?:attack|mov|touch|enter|tak|contest)\w*/i;
+const PROMISE = /(?<!\byou (?:\w+ )?)\b(?:no|not|won't|never) (?:be )?(?:attack|mov|touch|enter|tak|contest)\w*/;
+/** Whether the sentence promises to leave the province alone: it has to be what the refusal is about, so in the same clause. */
+const promises = (s: string, id: Province) => new RegExp(`${PROMISE.source}[^,;]*\\b${id}\\b`, "i").test(s);
 
 const sentences = (text: string) =>
   text
@@ -78,13 +81,13 @@ function momentOf(map: GameMap, before: State, record: GamePhase, after: State, 
       if (!victim || victim === m.power) continue;
       const promise = between(m.power, victim)
         .flatMap((source) => sentences(source.text).map((text) => ({ source, text })))
-        .find((c) => names(c.text, m.to) && PROMISE.test(c.text));
+        .find((c) => promises(c.text, m.to));
       if (promise) return { kind: "broken", power: m.power, victim, province: m.to, from: m.from, promise: message(promise) };
     }
+    const homes = new Set(Object.values(map.homes).flat());
     for (const province of taken) {
       const power = after.owners[province];
-      const victim = before.owners[province];
-      if (power && (map.homes[power].includes(province) || (victim && map.homes[victim].includes(province)))) return { kind: "home", power, victim, province, from: cameFrom(power, province) };
+      if (power && homes.has(province)) return { kind: "home", power, victim: before.owners[province], province, from: cameFrom(power, province) };
     }
     return undefined;
   };

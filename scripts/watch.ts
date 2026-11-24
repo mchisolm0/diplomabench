@@ -13,7 +13,7 @@
 // moment in Highlights, or all of them as a recap, with its motion and sized
 // for a phone.
 import { execFile } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -48,7 +48,7 @@ function replayPage(): { html: string; events: number } {
   return { html: page.replace("<!--EVENTS-->", () => `<script>window.EVENTS = ${inline(`[${ls.join(",")}]`)}; window.MOMENTS = ${inline(JSON.stringify(moments(ls)))};</script>`), events: ls.length };
 }
 
-type Shot = { query: string; size: [number, number]; scale: number };
+type Shot = { query: string; size: [number, number]; scale: number; fps: number };
 // A moment's frame in CSS pixels. Screenshots are taken at 1.5x: 1080x1920 or 1920x1080.
 const SIZES: Record<string, [number, number]> = { "9:16": [720, 1280], "16:9": [1280, 720] };
 /** How to shoot a moment: which one (all, or its number in Highlights) and the frame's shape. */
@@ -56,14 +56,15 @@ function clip(moment: string, aspect: string): Shot {
   const size = SIZES[aspect];
   if (!size) throw new Error(`--aspect is one of ${Object.keys(SIZES).join(", ")}`);
   if (!/^(all|[1-9]\d*)$/.test(moment)) throw new Error("--moment is all or a moment's number in Highlights");
-  return { query: `moment=${moment}&aspect=${aspect}`, size, scale: 1.5 };
+  // The page draws a moment's motion at 30 frames a second.
+  return { query: `moment=${moment}&aspect=${aspect}`, size, scale: 1.5, fps: 30 };
 }
 
 /**
  * Renders the replay as a video and says how long it came out. The page lists its frames (the query
  * that draws each, and how long it stays up), headless Chromium screenshots them, and ffmpeg joins them.
  */
-async function video(out: string, { query, size, scale }: Shot): Promise<string> {
+async function video(out: string, { query, size, scale, fps }: Shot): Promise<string> {
   const run = promisify(execFile);
   const chrome = process.env.CHROME ?? "chromium";
   const dir = mkdtempSync(join(tmpdir(), "diplomabench-video-"));
@@ -82,13 +83,15 @@ async function video(out: string, { query, size, scale }: Shot): Promise<string>
       for (let i = next++; i < frames.length; i = next++) await run(chrome, [...headless(worker), `--screenshot=${png(i)}`, `${url}?${frames[i]?.q}&${query}`]);
     };
     await Promise.all(Array.from({ length: 6 }, (_, worker) => shoot(worker)));
-    // The concat format takes each frame's duration. The last frame is listed twice so its duration counts,
-    // which can count it twice, so the video is cut to the frames' total.
-    const list = frames.flatMap(({ ms }, i) => [`file '${png(i)}'`, `duration ${ms / 1000}`]).concat(`file '${png(frames.length - 1)}'`);
-    const seconds = frames.reduce((a, f) => a + f.ms, 0) / 1000;
-    writeFileSync(join(dir, "frames.txt"), list.join("\n"));
-    await run("ffmpeg", ["-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", join(dir, "frames.txt"), "-vf", "fps=30,format=yuv420p", "-c:v", "libx264", "-t", String(seconds), resolve(out)]);
-    return `${frames.length} frames, ${Math.round(seconds)}s`;
+    // ffmpeg reads a plain image sequence at a fixed rate, so each frame is linked once per tick it stays up.
+    let ticks = 0;
+    let linked = 0;
+    frames.forEach(({ ms }, i) => {
+      ticks += (ms / 1000) * fps;
+      for (; linked < Math.round(ticks); linked++) symlinkSync(png(i), join(dir, `tick-${String(linked).padStart(6, "0")}.png`));
+    });
+    await run("ffmpeg", ["-y", "-loglevel", "error", "-framerate", String(fps), "-i", join(dir, "tick-%06d.png"), "-vf", "format=yuv420p", "-c:v", "libx264", resolve(out)]);
+    return `${frames.length} frames, ${Math.round(linked / fps)}s`;
   } finally {
     rmSync(dir, { recursive: true });
   }
@@ -99,7 +102,8 @@ if (values.html) {
   writeFileSync(values.html, html);
   console.log(`wrote ${values.html} (${events} events)`);
 } else if (values.video) {
-  const shot = values.moment ? clip(values.moment, values.aspect) : { query: values.testing ? `testing&seat=${values.testing}` : "", size: [1440, 900] as [number, number], scale: 1 };
+  // The whole replay holds each change for a second or more, so ten frames a second lose nothing.
+  const shot: Shot = values.moment ? clip(values.moment, values.aspect) : { query: values.testing ? `testing&seat=${values.testing}` : "", size: [1440, 900], scale: 1, fps: 10 };
   console.log(`wrote ${values.video} (${await video(values.video, shot)})`);
 } else {
   const server = createServer((req, res) => {

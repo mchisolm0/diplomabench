@@ -32,9 +32,16 @@ test("a move into a province the mover just promised to leave alone is a broken 
   ]);
 });
 
-test("a threat is not a promise: the same move is then a home center changing hands", () => {
-  const messages = [message("EPSILON", ["DELTA"], "If you do not move out of GDE I take DEL. Last warning.")];
-  expect(findMoments(phase(before, after, { ...taken, messages }))).toMatchObject([{ kind: "home", power: "EPSILON", victim: "DELTA", province: "DEL", quotes: [{ kind: "message", text: "If you do not move out of GDE I take DEL." }] }]);
+test("a threat, or a promise about somewhere else, is not a broken word: the move is then a home center changing hands", () => {
+  const threat = [message("EPSILON", ["DELTA"], "If you do not move out of GDE I take DEL. Last warning.")];
+  expect(findMoments(phase(before, after, { ...taken, messages: threat }))).toMatchObject([{ kind: "home", power: "EPSILON", victim: "DELTA", province: "DEL", quotes: [{ kind: "message", text: "If you do not move out of GDE I take DEL." }] }]);
+  const elsewhere = [message("EPSILON", ["DELTA"], "I won't attack GDE, and you should leave DEL.")];
+  expect(findMoments(phase(before, after, { ...taken, messages: elsewhere }))).toMatchObject([{ kind: "home" }]);
+});
+
+test("a home center taken from a power that had taken it first still counts", () => {
+  const held = { ...before, owners: { ...before.owners, DEL: "GAMMA" as const } };
+  expect(findMoments(phase(held, after, taken))).toMatchObject([{ kind: "home", power: "EPSILON", victim: "GAMMA", province: "DEL" }]);
 });
 
 test("losing a last army outranks the rest, and the mover's own words come from before its orders", () => {
